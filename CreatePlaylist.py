@@ -1,7 +1,12 @@
 import requests
 import json
+import os
 
 from secrets import spotify_token, user_id
+
+import google_auth_oauthlib.flow
+import googleapiclient.discovery
+import googleapiclient.errors
 
 class CreatePlaylist:
     def __init__(self):
