@@ -12,6 +12,7 @@ class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         self.token = spotify_token
+        self.youtube_client = self.get_youtube_api()
 
     def get_youtube_api(self):
         """ Log Into Youtube, Copied from Youtube Data API """
