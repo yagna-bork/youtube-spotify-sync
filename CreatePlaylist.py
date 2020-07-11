@@ -8,11 +8,14 @@ import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
 
+import youtube_dl
+
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         self.token = spotify_token
         self.youtube_client = self.get_youtube_api()
+        self.liked_videos = {}
 
     def get_youtube_api(self):
         """ Log Into Youtube, Copied from Youtube Data API """
@@ -34,10 +37,39 @@ class CreatePlaylist:
         youtube_client = googleapiclient.discovery.build(
             api_service_name, api_version, credentials=credentials)
 
+        # TODO client_secret set to installed might be an issue
         return youtube_client
 
-    def get_liked_vids(self):
-        pass
+    # get all liked youtube videos & store information song information about each video
+    # TODO is every video even non music video added?
+    def get_liked_videos(self):
+        request = self.youtube_client.videos().list(
+            part='snippet,contentDetails',
+            myRatings='like'
+        )
+        response = request.execute()
+
+        for item in response['items']:
+            video_title = item["snippet"]["title"]
+            youtube_url = "https://www.youtube.com/watch?v={}".format(item['id'])
+
+            # use youtube to parse song information
+            video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
+
+            song_name = video['track']
+            artist = video['artist']
+
+            # save information
+            self.liked_videos[video_title] = {
+                "youtube_url": youtube_url,
+                "song_name": song_name,
+                "artist": artist,
+
+                # spotify resource uri for easy access
+                "spotify_uri": self.get_song_spotify_uri(song_name, artist)
+            }
+
+
 
     # Create corresponding playlist on Spotify
     def create_playlist(self):
