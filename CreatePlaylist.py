@@ -15,7 +15,7 @@ class CreatePlaylist:
         self.user_id = user_id
         self.token = spotify_token
         self.youtube_client = self.get_youtube_api()
-        self.liked_videos = {}
+        self.liked_songs_info = {}
 
     def get_youtube_api(self):
         """ Log Into Youtube, Copied from Youtube Data API """
@@ -45,7 +45,7 @@ class CreatePlaylist:
     def get_liked_videos(self):
         request = self.youtube_client.videos().list(
             part='snippet,contentDetails',
-            myRatings='like'
+            myRating='like'
         )
         response = request.execute()
 
@@ -54,13 +54,14 @@ class CreatePlaylist:
             youtube_url = "https://www.youtube.com/watch?v={}".format(item['id'])
 
             # use youtube to parse song information
+            print(youtube_url)
             video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
 
             song_name = video['track']
             artist = video['artist']
 
             # save information
-            self.liked_videos[video_title] = {
+            self.liked_songs_info[video_title] = {
                 "youtube_url": youtube_url,
                 "song_name": song_name,
                 "artist": artist,
@@ -68,8 +69,6 @@ class CreatePlaylist:
                 # spotify resource uri for easy access
                 "spotify_uri": self.get_song_spotify_uri(song_name, artist)
             }
-
-
 
     # Create corresponding playlist on Spotify
     def create_playlist(self):
@@ -112,7 +111,31 @@ class CreatePlaylist:
         # uri of first song from query results
         return response_json['tracks']['items'][0]['uri']
 
+    def add_songs_to_playlist(self): #TODO timestamp so only new entries added
+        self.get_liked_videos()
+        song_uris = [info['spotify_uri'] for _, info in self.liked_songs_info.items()]
+        new_playlist_id = self.create_playlist()
 
-    def add_song_to_playlist(self):
-        pass
+        request_data = json.dumps(song_uris)
 
+        query = "https://api.spotify.com/v1/playlists/{}/tracks".format(new_playlist_id)
+
+        # position left empty -> songs appended
+        request_body = json.dumps({
+            "uris": request_data
+        })
+
+        response = requests.post(
+            query,
+            data=request_body,
+            headers={
+                "Authorization": "Bearer {}".format(self.token),
+                "Content-Type": "application/json"
+            }
+        )
+
+        return response.json()
+
+if __name__ == '__main__':
+    cp = CreatePlaylist()
+    cp.add_songs_to_playlist()
