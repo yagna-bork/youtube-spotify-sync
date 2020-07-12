@@ -68,14 +68,29 @@ class CreatePlaylist:
         # TODO client_secret set to installed might be an issue
         return youtube_client
 
-    # get all liked youtube videos & store information song information about each video
+    # returns song name, artist and spotify id
+    # TODO Use new version of youtube-dl that implements this fix
+    def get_spotify_id(self, video_title):
+        try:
+            artist, song_name = get_artist_title(video_title)
+            spotify_uri = self.get_song_spotify_uri(song_name, artist)
+
+            if spotify_uri != -1:
+                return spotify_uri
+            else:
+                return None
+        except:
+            print("Could not find song name and artist from {0}".format(video_title))
+            return None
+
+    # get all youtube videos from playlist & returns their spotify id information
     # TODO is every video even non music video added?
-    def extract_and_save_playlist_songs(self, playlist_id):
+    def get_all_songs_information(self, playlist_id):
+        spotify_ids = []
+
         request = self.youtube_client.playlistItems().list(
             part="snippet,contentDetails",
-            maxResults=50, # TODO make this as long as the playlist
-            # id of my personal liked videos playlist
-            # TODO identify this id automatically
+            maxResults=50,
             playlistId=playlist_id
         )
 
@@ -83,41 +98,27 @@ class CreatePlaylist:
         while True:
             response = request.execute()
 
-            for item in response['items']:
-                video_title = item["snippet"]["title"]
-                youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
+            for video in response['items']:
+                video_title = video["snippet"]["title"]
+                youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
 
-                # TODO Use new version of youtube-dl that implements this fix
-                try:
-                    artist, song_name = get_artist_title(video_title)
+                spotify_id = self.get_spotify_id(video_title)
 
-                    # print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
+                if spotify_id is not None:
+                    spotify_ids.append(spotify_id)
 
-                    spotify_uri = self.get_song_spotify_uri(song_name, artist)
-                    if spotify_uri != -1:
-                        self.liked_songs_info[video_title] = {
-                            "youtube_url": youtube_url,
-                            "song_name": song_name,
-                            "artist": artist,
-
-                            # spotify resource uri for easy access
-                            "spotify_uri": self.get_song_spotify_uri(song_name, artist)
-                        }
-                except:
-                    print("Could not find song name and artist from {0} at {1}".format(video_title, youtube_url))
-
-            # refine request so it fetches next page of results or finish loop
+            # refine request so it fetches next page of results or prevent anymore requests
             if 'nextPageToken' in response:
                 request = self.youtube_client.playlistItems().list(
                     part="snippet,contentDetails",
-                    maxResults=50, # TODO make this as long as the playlist
-                    # id of my personal liked videos playlist
-                    # TODO identify this id automatically
-                    playlistId="LLEA6rXRPPbQur1xyOgurtQg",
+                    maxResults=50,
+                    playlistId=playlist_id,
                     pageToken=response['nextPageToken']
                 )
             else:
                 break
+
+        return spotify_ids
 
     def get_playlist_name(self, playlist_id):
         request = self.youtube_client.playlists().list(
@@ -222,11 +223,12 @@ class CreatePlaylist:
             else:
                 print("{} has not been synced before".format(yt_playlist_id))
 
+                spotify_ids = self.get_all_songs_information(yt_playlist_id)
+
                 yt_playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_playlist_id = self.create_playlist(yt_playlist_name)
 
-
-
+                print("Spotify ids of all songs in {0}:\n{1}".format(yt_playlist_name, spotify_ids))
 
             break
 
