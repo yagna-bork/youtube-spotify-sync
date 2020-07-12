@@ -55,31 +55,55 @@ class CreatePlaylist:
 
         print("Length of liked videos: {}".format(len(response['items'])))
 
-        for item in response['items']:
-            video_title = item["snippet"]["title"]
-            youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
+        # only using youtube-dl for first video which worked on example repo
+        item = response['items'][0]
+        video_title = item["snippet"]["title"]
+        youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
+        video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
+        song_name = video['track']
+        artist = video['artist']
+        print("Youtube url: {0}"
+              "\nTitle: {5}"
+              "Item object: "
+              "\n{1}"
+              "\nSong name{2}"
+              "\nArtist: {3}"
+              "\nYT-DL object:"
+              "\n{4}".format(youtube_url, item, song_name, artist, video, video_title))
 
-            # use youtube to parse song information
-            video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
-
-            song_name = video['track']
-            artist = video['artist']
-
-            print("Information for {0}\nSong title: {1}\nArtist: {2}\n".format(
-                video_title, song_name, artist))
-
-            if song_name is not None and artist is not None:
-                print("SONG NAME: {0}, ARTIST: {1} PASSED IF CHECK".format(song_name, artist))
-
-                # save information
-                self.liked_songs_info[video_title] = {
-                    "youtube_url": youtube_url,
-                    "song_name": song_name,
-                    "artist": artist,
-
-                    # spotify resource uri for easy access
-                    "spotify_uri": self.get_song_spotify_uri(song_name, artist)
-                }
+        # for item in response['items']:
+        #     video_title = item["snippet"]["title"]
+        #     youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
+        #
+        #     try:
+        #         # use youtube to parse song information
+        #         video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
+        #
+        #         if 'track' in video:
+        #             print("track attribute found for {}".format(youtube_url))
+        #         if 'artist' in video:
+        #             print("video attribute found for {}".format(youtube_url))
+        #
+        #         song_name = video['track']
+        #         artist = video['artist']
+        #
+        #         print("Information for {0}\nSong title: {1}\nArtist: {2}\n".format(
+        #             video_title, song_name, artist))
+        #
+        #         if song_name is not None and artist is not None:
+        #             print("SONG NAME: {0}, ARTIST: {1} PASSED IF CHECK".format(song_name, artist))
+        #
+        #             # save information
+        #             self.liked_songs_info[video_title] = {
+        #                 "youtube_url": youtube_url,
+        #                 "song_name": song_name,
+        #                 "artist": artist,
+        #
+        #                 # spotify resource uri for easy access
+        #                 "spotify_uri": self.get_song_spotify_uri(song_name, artist)
+        #             }
+        #     except:
+        #         print("{} can no longer be accessed.".format(youtube_url))
 
 
     # Create corresponding playlist on Spotify
