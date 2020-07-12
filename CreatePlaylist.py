@@ -47,6 +47,8 @@ class CreatePlaylist:
         request = self.youtube_client.playlistItems().list(
             part="snippet,contentDetails",
             maxResults=50,
+            # id of my personal liked videos playlist
+            # TODO identify this id automatically
             playlistId="LLEA6rXRPPbQur1xyOgurtQg"
         )
         response = request.execute()
@@ -55,29 +57,29 @@ class CreatePlaylist:
 
         for item in response['items']:
             video_title = item["snippet"]["title"]
-            youtube_url = "https://www.youtube.com/watch?v={}".format(item['id'])
+            youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
 
             # use youtube to parse song information
-            try:
-                video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
+            video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
 
-                song_name = video['track']
-                artist = video['artist']
+            song_name = video['track']
+            artist = video['artist']
 
-                if song_name is not None and artist is not None:
-                    print("SONG NAME: {0}, ARTIST: {1} PASSED IF CHECK".format(song_name, artist))
+            print("Information for {0}\nSong title: {1}\nArtist: {2}\n".format(
+                video_title, song_name, artist))
 
-                    # save information
-                    self.liked_songs_info[video_title] = {
-                        "youtube_url": youtube_url,
-                        "song_name": song_name,
-                        "artist": artist,
+            if song_name is not None and artist is not None:
+                print("SONG NAME: {0}, ARTIST: {1} PASSED IF CHECK".format(song_name, artist))
 
-                        # spotify resource uri for easy access
-                        "spotify_uri": self.get_song_spotify_uri(song_name, artist)
-                    }
-            except:
-                print("Unable to access video: {}".format(youtube_url))
+                # save information
+                self.liked_songs_info[video_title] = {
+                    "youtube_url": youtube_url,
+                    "song_name": song_name,
+                    "artist": artist,
+
+                    # spotify resource uri for easy access
+                    "spotify_uri": self.get_song_spotify_uri(song_name, artist)
+                }
 
 
     # Create corresponding playlist on Spotify
