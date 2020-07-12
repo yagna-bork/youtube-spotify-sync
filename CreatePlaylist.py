@@ -10,13 +10,33 @@ import googleapiclient.errors
 
 from youtube_title_parse import get_artist_title
 
+
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        self.token = "BQB60j9y38Vm5VnLuYsqdtBr4PTJAzfN2bSBOpMqOyhhWwRb1N8tFr5jJUxWlRVPYREjuWlqHeucATlM93mWmaMLIqLdhKTmd8P0sC9-hsF3NbcznYBTbGKf13Y0QIo71JkYz8YnAKvE7P5A_IZfR9s5siMiN06WNnHCfE_fF_sToAE5G7rB4b0EXp-CpENPAPi3AFnH6w"
+        self.token = "BQCuVP5JmvugE0hCeGVYDVHD6-InUc4bKiRIUhI7FCW_0BrtQJphaUIyHZllCmiY_-5HrFWATM-CcYDkNwF9CfseVfQJVAqfdHQ4DFIgYI-dz8PCI1Fp9L48iZna39LfP6kf67OIMc_hw7sgzHbUyQCFCS58SAqU5x99zRf2utRl_RYFpvhy5cw0OdlmkmC8wj0jk3kR2Q"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
+
+    def get_spotify_token(self):
+        print("Access this uri for spotify authorization:\n{}".format(get_uri))
+
+        post_uri = "https://accounts.spotify.com/api/token"
+        base64_id_secret = "YzhiMGJmOTFmMmY1NGYzNGJhNjMyNTZmM2QwMDllZTg6N2Q3ZTZiYTAxYjRiNDczNDk2MTYzNWIwNzQ4NDkxOTA="
+
+        code = input("Enter the code you got back: ")
+
+        curl_cmd = "curl -H 'Authorization: Basic {0}' " \
+                   "-d grant_type=authorization_code " \
+                   "-d code={2} " \
+                   "-d redirect_uri={1} " \
+                   "https://accounts.spotify.com/api/token".format(base64_id_secret, redirect_url, code)
+
+        print("Use this curl command:\n{}".format(curl_cmd))
+        spotify_token = input("Enter the spotify token: ")
+
+        return spotify_token
 
     def get_youtube_api(self):
         """ Log Into Youtube, Copied from Youtube Data API """
@@ -51,30 +71,44 @@ class CreatePlaylist:
             # TODO identify this id automatically
             playlistId="LLEA6rXRPPbQur1xyOgurtQg"
         )
-        response = request.execute()
 
-        for item in response['items']:
-            video_title = item["snippet"]["title"]
-            youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
+        while True:
+            response = request.execute()
 
-            # TODO Use new version of youtube-dl that implements this fix
-            try:
-                artist, song_name = get_artist_title(video_title)
+            for item in response['items']:
+                video_title = item["snippet"]["title"]
+                youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
 
-                # print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
+                # TODO Use new version of youtube-dl that implements this fix
+                try:
+                    artist, song_name = get_artist_title(video_title)
 
-                spotify_uri = self.get_song_spotify_uri(song_name, artist)
-                if spotify_uri != -1:
-                    self.liked_songs_info[video_title] = {
-                        "youtube_url": youtube_url,
-                        "song_name": song_name,
-                        "artist": artist,
+                    # print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
 
-                        # spotify resource uri for easy access
-                        "spotify_uri": self.get_song_spotify_uri(song_name, artist)
-                    }
-            except:
-                print("Could not find song name and artist from {0} at {1}".format(video_title, youtube_url))
+                    spotify_uri = self.get_song_spotify_uri(song_name, artist)
+                    if spotify_uri != -1:
+                        self.liked_songs_info[video_title] = {
+                            "youtube_url": youtube_url,
+                            "song_name": song_name,
+                            "artist": artist,
+
+                            # spotify resource uri for easy access
+                            "spotify_uri": self.get_song_spotify_uri(song_name, artist)
+                        }
+                except:
+                    print("Could not find song name and artist from {0} at {1}".format(video_title, youtube_url))
+
+            if 'nextPageToken' in response:
+                request = self.youtube_client.playlistItems().list(
+                    part="snippet,contentDetails",
+                    maxResults=50, # TODO make this as long as the playlist
+                    # id of my personal liked videos playlist
+                    # TODO identify this id automatically
+                    playlistId="LLEA6rXRPPbQur1xyOgurtQg",
+                    pageToken=response['nextPageToken']
+                )
+            else:
+                break
 
     # Create corresponding playlist on Spotify
     def create_playlist(self):
@@ -131,46 +165,29 @@ class CreatePlaylist:
         song_uris = [info['spotify_uri'] for _, info in self.liked_songs_info.items()]
         new_playlist_id = self.create_playlist()
 
-        request_data = json.dumps(song_uris)
+        print("len(song_uris) at start: {}".format(len(song_uris)))
+        while len(song_uris) > 0:
+            # max 100 songs per request
+            num_songs_current_req = min(100, len(song_uris))
+            request_data = json.dumps(song_uris[:num_songs_current_req])
+            print("len(request_data) at loop: {}".format(len(request_data)))
+            song_uris = song_uris[num_songs_current_req:]
+            print("len(song_uris) at loop: {}".format(len(song_uris)))
 
-        query = "https://api.spotify.com/v1/playlists/{}/tracks".format(new_playlist_id)
+            query = "https://api.spotify.com/v1/playlists/{}/tracks".format(new_playlist_id)
 
-        # position left empty -> songs appended
-        # request_body = json.dumps({
-        #     "uris": request_data
-        # })
+            response = requests.post(
+                query,
+                data=request_data,
+                headers={
+                    "Authorization": "Bearer {}".format(self.token),
+                    "Content-Type": "application/json"
+                }
+            )
 
-        response = requests.post(
-            query,
-            data=request_data,
-            headers={
-                "Authorization": "Bearer {}".format(self.token),
-                "Content-Type": "application/json"
-            }
-        )
-
-        return response.json()
-
-    def get_spotify_token(self):
-        print("Access this uri for spotify authorization:\n{}".format(get_uri))
-
-        post_uri = "https://accounts.spotify.com/api/token"
-        base64_id_secret = "YzhiMGJmOTFmMmY1NGYzNGJhNjMyNTZmM2QwMDllZTg6N2Q3ZTZiYTAxYjRiNDczNDk2MTYzNWIwNzQ4NDkxOTA="
-
-        code = input("Enter the code you got back: ")
-
-        curl_cmd = "curl -H 'Authorization: Basic {0}' " \
-                   "-d grant_type=authorization_code " \
-                   "-d code={2} " \
-                   "-d redirect_uri={1} " \
-                   "https://accounts.spotify.com/api/token".format(base64_id_secret, redirect_url, code)
-
-        print("Use this curl command:\n{}".format(curl_cmd))
-        spotify_token = input("Enter the spotify token: ")
-
-        return spotify_token
+            print(response.json())
 
 
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    print("Response: \n{}".format(cp.add_songs_to_playlist()))
+    cp.add_songs_to_playlist()
