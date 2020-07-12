@@ -2,7 +2,7 @@ import requests
 import json
 import os
 
-from secrets import spotify_token, user_id
+from secrets import user_id, get_uri, redirect_url
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -13,8 +13,8 @@ import youtube_dl
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
-        self.token = spotify_token
-        self.youtube_client = self.get_youtube_api()
+        self.token = ""
+        # self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
 
     def get_youtube_api(self):
@@ -54,7 +54,6 @@ class CreatePlaylist:
             youtube_url = "https://www.youtube.com/watch?v={}".format(item['id'])
 
             # use youtube to parse song information
-            print(youtube_url)
             video = youtube_dl.YoutubeDL({}).extract_info(youtube_url, False)
 
             song_name = video['track']
@@ -102,7 +101,7 @@ class CreatePlaylist:
 
         response = requests.get(
             endpoint,
-            header={
+            headers={
                 "Authorization": "Bearer {}".format(self.token)
             }
         )
@@ -136,6 +135,27 @@ class CreatePlaylist:
 
         return response.json()
 
+    def get_and_set_spotify_token(self):
+        print("Access this uri for spotify authorization:\n{}".format(get_uri))
+
+        post_uri = "https://accounts.spotify.com/api/token"
+        base64_id_secret = "YzhiMGJmOTFmMmY1NGYzNGJhNjMyNTZmM2QwMDllZTg6N2Q3ZTZiYTAxYjRiNDczNDk2MTYzNWIwNzQ4NDkxOTA="
+
+        code = input("Enter the code you got back: ")
+
+        curl_cmd = "curl -H 'Authorization: Basic {0}' " \
+                   "-d grant_type=authorization_code " \
+                   "-d code={2} " \
+                   "-d redirect_uri={1} " \
+                   "https://accounts.spotify.com/api/token".format(base64_id_secret, redirect_url, code)
+
+        print("Use this curl command:\n{}".format(curl_cmd))
+        spotify_token = input("Enter the spotify token: ")
+
+        self.token = spotify_token
+
+
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    cp.add_songs_to_playlist()
+    # cp.add_songs_to_playlist()
+    cp.get_and_set_spotify_token()
