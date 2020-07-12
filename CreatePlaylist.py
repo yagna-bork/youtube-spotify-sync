@@ -14,7 +14,7 @@ class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        self.token = "BQC_z1z_kUDXkefPn2DS9TmGXetuQMmKIAfHIHbEX9SIC54Re_4czx8_nR8ZKSSc3PtfW5YVLvM30C7G-ECNA2CndPif7YxfR6j4Fg7e9QAcHQEZoAS3x1mYSQnLPfBBStgE775GRlVwAtGYpIF1DGbtoxxEAiU7Okd_A8tnXgFURSDCVLN1hF21n3s9BSB2KOzWAFvu5Q"
+        self.token = "BQA_wYRr066UdXUv8xT10GpT8VF1voDC1CQ-xtRKDRx2FjLQPrKzG3ZuvScudzEkzTWbnAEHwWDeCmTKYErNnDrejMfxfcEfWOwBcP1YWdbMi-prajBSznQC7rPyiV8s489duPd8fQ"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
 
@@ -46,27 +46,35 @@ class CreatePlaylist:
     def get_liked_videos(self):
         request = self.youtube_client.playlistItems().list(
             part="snippet,contentDetails",
-            maxResults=50,
+            maxResults=50, # TODO make this as long as the playlist
             # id of my personal liked videos playlist
             # TODO identify this id automatically
             playlistId="LLEA6rXRPPbQur1xyOgurtQg"
         )
         response = request.execute()
 
-
-
         for item in response['items']:
             video_title = item["snippet"]["title"]
             youtube_url = "https://www.youtube.com/watch?v={}".format(item['contentDetails']['videoId'])
 
-            self.liked_songs_info[video_title] = {
-                "youtube_url": youtube_url,
-                "song_name": song_name,
-                "artist": artist,
+            # TODO Use new version of youtube-dl that implements this fix
+            try:
+                artist, song_name = get_artist_title(video_title)
 
-                # spotify resource uri for easy access
-                "spotify_uri": self.get_song_spotify_uri(song_name, artist)
-            }
+                print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
+
+                spotify_uri = self.get_song_spotify_uri(song_name, artist)
+                if spotify_uri != -1:
+                    self.liked_songs_info[video_title] = {
+                        "youtube_url": youtube_url,
+                        "song_name": song_name,
+                        "artist": artist,
+
+                        # spotify resource uri for easy access
+                        "spotify_uri": self.get_song_spotify_uri(song_name, artist)
+                    }
+            except:
+                print("Could not find song name and artist from {0} at {1}".format(video_title, youtube_url))
 
     # Create corresponding playlist on Spotify
     def create_playlist(self):
@@ -104,11 +112,16 @@ class CreatePlaylist:
                 "Authorization": "Bearer {}".format(self.token)
             }
         )
-        response_json = response.json()
 
-        # uri of first song from query results
-        # print(response_json)
-        return response_json['tracks']['items'][0]['uri']
+        response_json = response.json()
+        returned_songs = response_json['tracks']['items']
+
+        # TODO suggest alternative for failed songs command line feature
+        if len(returned_songs) > 0:
+            # uri of first song from query results
+            return returned_songs[0]['uri']
+        else:
+            return -1
 
     def add_songs_to_playlist(self): #TODO timestamp so only new entries added
         self.get_liked_videos()
@@ -157,7 +170,4 @@ class CreatePlaylist:
 
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    # print(cp.add_songs_to_playlist())
-    # cp.get_liked_videos()
-    # print(cp.liked_songs_info)
-    print(cp.get_spotify_token())
+    print("Response: \n" + cp.add_songs_to_playlist())
