@@ -14,7 +14,7 @@ class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        self.token = "BQA_wYRr066UdXUv8xT10GpT8VF1voDC1CQ-xtRKDRx2FjLQPrKzG3ZuvScudzEkzTWbnAEHwWDeCmTKYErNnDrejMfxfcEfWOwBcP1YWdbMi-prajBSznQC7rPyiV8s489duPd8fQ"
+        self.token = "BQB60j9y38Vm5VnLuYsqdtBr4PTJAzfN2bSBOpMqOyhhWwRb1N8tFr5jJUxWlRVPYREjuWlqHeucATlM93mWmaMLIqLdhKTmd8P0sC9-hsF3NbcznYBTbGKf13Y0QIo71JkYz8YnAKvE7P5A_IZfR9s5siMiN06WNnHCfE_fF_sToAE5G7rB4b0EXp-CpENPAPi3AFnH6w"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
 
@@ -61,7 +61,7 @@ class CreatePlaylist:
             try:
                 artist, song_name = get_artist_title(video_title)
 
-                print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
+                # print("Title: {0}\nSong name: {1}\nArtist: {2}".format(video_title, song_name, artist))
 
                 spotify_uri = self.get_song_spotify_uri(song_name, artist)
                 if spotify_uri != -1:
@@ -95,7 +95,10 @@ class CreatePlaylist:
         )
         response_json = response.json()
 
-        return response_json["id"]
+        if 'error' in response_json:
+            print("Response after sending request to create playlist: \n{}".format(response_json))
+        else:
+            return response_json["id"]
 
     def get_song_spotify_uri(self, song_name, artist):
         q = "{0}+{1}".format(song_name, artist)
@@ -170,4 +173,4 @@ class CreatePlaylist:
 
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    print("Response: \n" + cp.add_songs_to_playlist())
+    print("Response: \n{}".format(cp.add_songs_to_playlist()))
