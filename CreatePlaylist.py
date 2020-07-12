@@ -79,6 +79,7 @@ class CreatePlaylist:
             playlistId=playlist_id
         )
 
+        # keep requesting songs from playlist while some are still remaining
         while True:
             response = request.execute()
 
@@ -105,6 +106,7 @@ class CreatePlaylist:
                 except:
                     print("Could not find song name and artist from {0} at {1}".format(video_title, youtube_url))
 
+            # refine request so it fetches next page of results or finish loop
             if 'nextPageToken' in response:
                 request = self.youtube_client.playlistItems().list(
                     part="snippet,contentDetails",
@@ -223,9 +225,8 @@ class CreatePlaylist:
                 yt_playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_playlist_id = self.create_playlist(yt_playlist_name)
 
-                # create spotify pl with correct name, description and return correct id
-                print(yt_playlist_name)
-                print(spotify_playlist_id)
+
+
 
             break
 
