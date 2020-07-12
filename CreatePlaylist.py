@@ -3,6 +3,8 @@ import json
 import os
 
 from secrets import user_id, get_uri, redirect_url
+from storage_manager import StorageManager
+from input_manger import get_inputs
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -10,14 +12,19 @@ import googleapiclient.errors
 
 from youtube_title_parse import get_artist_title
 
+input_field_to_col = {
+    "playlist_id": 0,
+    "download": 1
+}
 
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        self.token = "BQCuVP5JmvugE0hCeGVYDVHD6-InUc4bKiRIUhI7FCW_0BrtQJphaUIyHZllCmiY_-5HrFWATM-CcYDkNwF9CfseVfQJVAqfdHQ4DFIgYI-dz8PCI1Fp9L48iZna39LfP6kf67OIMc_hw7sgzHbUyQCFCS58SAqU5x99zRf2utRl_RYFpvhy5cw0OdlmkmC8wj0jk3kR2Q"
+        self.token = "BQC_cwE6AUi_gkX5a5ez0rQSZFdrH_W4Hyx75L64SDI4qiqf1UuGYQ0TgDLSclLz9Uy2itv2LoMzBs4CkVtBXF3_4mAnY5VGpK6z0siM6goQx4cRbFHwrct7gJZzbuPwknBc13pJBMpwcR-KrL1yJ-LC6yaz6qXP6ayZBKcyjmD2TMqBrcKmlVSDV0d5p9MlQeA3kcWp_A"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
+        self.storage = StorageManager()
 
     def get_spotify_token(self):
         print("Access this uri for spotify authorization:\n{}".format(get_uri))
@@ -63,13 +70,13 @@ class CreatePlaylist:
 
     # get all liked youtube videos & store information song information about each video
     # TODO is every video even non music video added?
-    def get_liked_videos(self):
+    def extract_and_save_playlist_songs(self, playlist_id):
         request = self.youtube_client.playlistItems().list(
             part="snippet,contentDetails",
             maxResults=50, # TODO make this as long as the playlist
             # id of my personal liked videos playlist
             # TODO identify this id automatically
-            playlistId="LLEA6rXRPPbQur1xyOgurtQg"
+            playlistId=playlist_id
         )
 
         while True:
@@ -110,12 +117,21 @@ class CreatePlaylist:
             else:
                 break
 
+    def get_playlist_name(self, playlist_id):
+        request = self.youtube_client.playlists().list(
+            part="snippet",
+            id=playlist_id
+        )
+
+        response = request.execute()
+        return response['items'][0]['snippet']['title']
+
     # Create corresponding playlist on Spotify
-    def create_playlist(self):
+    def create_playlist(self, name, public=True):
         request_body = json.dumps({
-            "name": "Youtube Liked Videos",
-            "description": "Songs which are on your liked videos playlist from YouTube",
-            "public": False
+            "name": name,
+            "description": "Spotify synced version of the {} playlist from your YouTube".format(name),
+            "public": public
         })
         endpoint = "https://api.spotify.com/v1/users/{}/playlists".format(self.user_id)
 
@@ -131,6 +147,7 @@ class CreatePlaylist:
 
         if 'error' in response_json:
             print("Response after sending request to create playlist: \n{}".format(response_json))
+            return -1 # TODO replace all -1 with proper error handling
         else:
             return response_json["id"]
 
@@ -161,18 +178,24 @@ class CreatePlaylist:
             return -1
 
     def add_songs_to_playlist(self): #TODO timestamp so only new entries added
-        self.get_liked_videos()
+        # TODO write class to handle input file reading
+        playlist_id = ""
+        with open('input.csv') as file:
+            reader = csv.reader(file)
+
+            for idx, row in enumerate(reader):
+                playlist_id = row[0]
+                break
+
+        self.extract_and_save_playlist_songs(playlist_id)
         song_uris = [info['spotify_uri'] for _, info in self.liked_songs_info.items()]
         new_playlist_id = self.create_playlist()
 
-        print("len(song_uris) at start: {}".format(len(song_uris)))
         while len(song_uris) > 0:
             # max 100 songs per request
             num_songs_current_req = min(100, len(song_uris))
             request_data = json.dumps(song_uris[:num_songs_current_req])
-            print("len(request_data) at loop: {}".format(len(request_data)))
             song_uris = song_uris[num_songs_current_req:]
-            print("len(song_uris) at loop: {}".format(len(song_uris)))
 
             query = "https://api.spotify.com/v1/playlists/{}/tracks".format(new_playlist_id)
 
@@ -187,7 +210,29 @@ class CreatePlaylist:
 
             print(response.json())
 
+        # write as changes may have been made
+        self.storage.write_storage()
+
+    def sync_playlists(self):
+        for yt_playlist_id, download in get_inputs().items():
+            if self.storage.has_playlist_been_synced(yt_playlist_id):
+                print("{} has been synced before".format(yt_playlist_id))
+            else:
+                print("{} has not been synced before".format(yt_playlist_id))
+
+                yt_playlist_name = self.get_playlist_name(yt_playlist_id)
+                spotify_playlist_id = self.create_playlist(yt_playlist_name)
+
+                # create spotify pl with correct name, description and return correct id
+                print(yt_playlist_name)
+                print(spotify_playlist_id)
+
+            break
+
 
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    cp.add_songs_to_playlist()
+    # cp.add_songs_to_playlist()
+
+    cp.sync_playlists()
+
