@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from secrets import user_id, get_uri, redirect_url
+from secrets import user_id, get_uri, redirect_url, base64_id_secret
 from storage_manager import StorageManager
 from input_manger import get_inputs
 from datetime_manager import gmt_to_local_timezone, parse_youtube_datetime
@@ -31,7 +31,6 @@ class CreatePlaylist:
         print("Access this uri for spotify authorization:\n{}".format(get_uri))
 
         post_uri = "https://accounts.spotify.com/api/token"
-        base64_id_secret = "YzhiMGJmOTFmMmY1NGYzNGJhNjMyNTZmM2QwMDllZTg6N2Q3ZTZiYTAxYjRiNDczNDk2MTYzNWIwNzQ4NDkxOTA="
 
         code = input("Enter the code you got back: ")
 
@@ -185,42 +184,6 @@ class CreatePlaylist:
             return returned_songs[0]['uri']
         else:
             return -1
-
-    def add_songs_to_playlist(self): #TODO timestamp so only new entries added
-        # TODO write class to handle input file reading
-        playlist_id = ""
-        with open('input.csv') as file:
-            reader = csv.reader(file)
-
-            for idx, row in enumerate(reader):
-                playlist_id = row[0]
-                break
-
-        self.extract_and_save_playlist_songs(playlist_id)
-        song_uris = [info['spotify_uri'] for _, info in self.liked_songs_info.items()]
-        new_playlist_id = self.create_playlist()
-
-        while len(song_uris) > 0:
-            # max 100 songs per request
-            num_songs_current_req = min(100, len(song_uris))
-            request_data = json.dumps(song_uris[:num_songs_current_req])
-            song_uris = song_uris[num_songs_current_req:]
-
-            query = "https://api.spotify.com/v1/playlists/{}/tracks".format(new_playlist_id)
-
-            response = requests.post(
-                query,
-                data=request_data,
-                headers={
-                    "Authorization": "Bearer {}".format(self.token),
-                    "Content-Type": "application/json"
-                }
-            )
-
-            print(response.json())
-
-        # write as changes may have been made
-        self.storage.write_storage()
 
     def add_songs_to_spotify_playlist(self, song_uris, spotify_playlist_id):
         while len(song_uris) > 0:
