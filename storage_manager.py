@@ -1,6 +1,5 @@
 import csv
-from datetime import datetime
-import time
+from datetime_manager import datetime_to_timestamp_str, timestamp_str_to_datetime, generate_times_stamps, get_time_now
 
 # TODO allow for multiple StorageManager objects to operate simultaneously
 # storage:
@@ -25,7 +24,7 @@ class StorageManager:
                 # store row as entry into storage dict
                 storage_dict[row[0]] = {
                     "spotify_playlist_id": row[1],
-                    "last_synced_ts": datetime.fromtimestamp(float(row[2]))
+                    "last_synced_ts": timestamp_str_to_datetime(row[2])
                 }
 
         return storage_dict
@@ -41,8 +40,7 @@ class StorageManager:
                 for yt_playlist_id, values in self.storage.items():
                     spotify_playlist_id = values['spotify_playlist_id']
 
-                    # convert datetime to timestamp before storing
-                    timestamp = datetime.timestamp(values['last_synced_ts'])
+                    timestamp = datetime_to_timestamp_str(values['last_synced_ts'])
 
                     writer.writerow([yt_playlist_id, spotify_playlist_id, timestamp])
 
@@ -52,7 +50,7 @@ class StorageManager:
         return yt_playlist_id in self.storage
 
     def store_new_entry(self, yt_playlist_id, spotify_pl_id):
-        now = datetime.now()
+        now = get_time_now()
 
         self.storage[yt_playlist_id] = {
             "spotify_playlist_id": spotify_pl_id,
@@ -67,12 +65,11 @@ class StorageManager:
     def get_spotify_playlist_id(self, yt_playlist_id):
         return self.storage[yt_playlist_id]['spotify_playlist_id']
 
-def generate_times_stamps():
-    for i in range(3):
-        now = datetime.now()
-        now_ts = datetime.timestamp(now)
-        print(now_ts)
-        time.sleep(3)
+    def update_last_synced(self, yt_playlist_id):
+        self.storage[yt_playlist_id]['last_synced_ts'] = get_time_now()
+
+        print("Storage after update of last synced timestamp for {0}:\n{1}".format(yt_playlist_id, self.storage))
+
 
 if __name__ == '__main__':
     storage = StorageManager()

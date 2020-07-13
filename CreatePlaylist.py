@@ -1,10 +1,12 @@
 import requests
 import json
 import os
+from datetime import datetime, timezone
 
 from secrets import user_id, get_uri, redirect_url
 from storage_manager import StorageManager
 from input_manger import get_inputs
+from datetime_manager import gmt_to_local_timezone, parse_youtube_datetime
 
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
@@ -20,8 +22,7 @@ input_field_to_col = {
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
-        # self.token = self.get_spotify_token()
-        self.token = "BQAk0C4n6tobuVDiWBbX7vXbAOgWPOf836BnMSUwqSHrJB4RtC97kxmBhIsdRL8Uzkx46EdocSx17bVJZYzI-4BQKyZrUNas5h9Bm0FuFloF2c5HpPmS94dVqcrf2uWLA6V3gEMLCOYz6FeuumjtNfwdsCd1XAFCZS1ZvuW71c6rE42Wr32rK6Vy43meRqJVsu8b9YEm8Q"
+        self.token = self.get_spotify_token()
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
@@ -100,14 +101,12 @@ class CreatePlaylist:
             for video in response['items']:
                 video_title = video["snippet"]["title"]
                 published_at_str = video["snippet"]["publishedAt"]
-                published_at = datetime.strptime(published_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                published_at = parse_youtube_datetime(published_at_str)
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
 
-                print(published_at, timestamp)
-
                 # only add song if its been added to playlist after last sync
-                if timestamp is not None and published_at > timestamp:
-                    print("{0} was added after {1}".format(video_title, timestamp))
+                if timestamp is None or published_at > timestamp:
+                    # print("{0} was added after {1}".format(video_title, timestamp))
 
                     spotify_id = self.get_spotify_id(video_title)
 
@@ -252,32 +251,45 @@ class CreatePlaylist:
                 print("{} has been synced before".format(yt_playlist_id))
 
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
+                print("{0} last synced at {1}".format(yt_playlist_id, last_synced))
+
+                song_uris = self.get_songs_information(yt_playlist_id, last_synced)
+                print("Retrieved following song uris: \n{0}".format(song_uris))
+
+                spotify_playlist_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
+                print("Got following spotify playlist id: {}".format(spotify_playlist_id))
+
+                self.add_songs_to_spotify_playlist(song_uris, spotify_playlist_id)
+
+                self.storage.update_last_synced(yt_playlist_id)
 
             else:
                 print("{} has not been synced before".format(yt_playlist_id))
 
-                song_uris = self.get_all_songs_information(yt_playlist_id)
+                song_uris = self.get_songs_information(yt_playlist_id)
+                print("Retrieved following song uris: \n{0}".format(song_uris))
 
                 yt_playlist_name = self.get_playlist_name(yt_playlist_id)
+
                 spotify_playlist_id = self.create_playlist(yt_playlist_name)
 
+                if spotify_playlist_id == -1:
+                    print("Error creating playlist. Try again")
+                    return
+
+                print("Got new spotify playlist id: {0}".format(spotify_playlist_id))
+
+                # no need for debug statements here
                 self.add_songs_to_spotify_playlist(song_uris, spotify_playlist_id)
 
+                # debug statements inside StorageManager class
                 self.storage.store_new_entry(yt_playlist_id, spotify_playlist_id)
-
-                # create playlist with songs and update in storage.csv with current time
-                # delete entry from storage.csv
-
-            break
 
         self.storage.write_storage()
 
+
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    # cp.add_songs_to_playlist()
+    cp.sync_playlists()
 
-    from datetime import datetime
-    dt = datetime.fromtimestamp(1594602633.370837)
-    # print(dt)
-    print(cp.get_songs_information("PLucKeiEo64s9376jBeUh9ukrWv6L5k0Ox", dt))
 
