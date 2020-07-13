@@ -7,7 +7,7 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 1. Follow link for Google 0Auth authentication
 1. DONE
 
-# Features remaining
+# Features remaining
 * Downloading songs from marked playlists
 * Refactoring 
   * Refactor for readability
