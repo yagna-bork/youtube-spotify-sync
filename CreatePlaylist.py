@@ -21,7 +21,7 @@ class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        self.token = "BQC_cwE6AUi_gkX5a5ez0rQSZFdrH_W4Hyx75L64SDI4qiqf1UuGYQ0TgDLSclLz9Uy2itv2LoMzBs4CkVtBXF3_4mAnY5VGpK6z0siM6goQx4cRbFHwrct7gJZzbuPwknBc13pJBMpwcR-KrL1yJ-LC6yaz6qXP6ayZBKcyjmD2TMqBrcKmlVSDV0d5p9MlQeA3kcWp_A"
+        self.token = "BQAk0C4n6tobuVDiWBbX7vXbAOgWPOf836BnMSUwqSHrJB4RtC97kxmBhIsdRL8Uzkx46EdocSx17bVJZYzI-4BQKyZrUNas5h9Bm0FuFloF2c5HpPmS94dVqcrf2uWLA6V3gEMLCOYz6FeuumjtNfwdsCd1XAFCZS1ZvuW71c6rE42Wr32rK6Vy43meRqJVsu8b9YEm8Q"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
@@ -83,9 +83,8 @@ class CreatePlaylist:
             print("Could not find song name and artist from {0}".format(video_title))
             return None
 
-    # get all youtube videos from playlist & returns their spotify id information
-    # TODO is every video even non music video added?
-    def get_all_songs_information(self, playlist_id):
+    # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
+    def get_songs_information(self, playlist_id, timestamp=None):
         spotify_ids = []
 
         request = self.youtube_client.playlistItems().list(
@@ -100,12 +99,20 @@ class CreatePlaylist:
 
             for video in response['items']:
                 video_title = video["snippet"]["title"]
+                published_at_str = video["snippet"]["publishedAt"]
+                published_at = datetime.strptime(published_at_str, "%Y-%m-%dT%H:%M:%SZ")
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
 
-                spotify_id = self.get_spotify_id(video_title)
+                print(published_at, timestamp)
 
-                if spotify_id is not None:
-                    spotify_ids.append(spotify_id)
+                # only add song if its been added to playlist after last sync
+                if timestamp is not None and published_at > timestamp:
+                    print("{0} was added after {1}".format(video_title, timestamp))
+
+                    spotify_id = self.get_spotify_id(video_title)
+
+                    if spotify_id is not None:
+                        spotify_ids.append(spotify_id)
 
             # refine request so it fetches next page of results or prevent anymore requests
             if 'nextPageToken' in response:
@@ -216,26 +223,61 @@ class CreatePlaylist:
         # write as changes may have been made
         self.storage.write_storage()
 
+    def add_songs_to_spotify_playlist(self, song_uris, spotify_playlist_id):
+        while len(song_uris) > 0:
+            num_songs_current_req = min(100, len(song_uris)) # N <= 100
+
+            # send first N songs to spotify
+            request_data = json.dumps(song_uris[:num_songs_current_req])
+
+            # remove first N elements from song_uris
+            song_uris = song_uris[num_songs_current_req:]
+
+            query = "https://api.spotify.com/v1/playlists/{}/tracks".format(spotify_playlist_id)
+
+            response = requests.post(
+                query,
+                data=request_data,
+                headers={
+                    "Authorization": "Bearer {}".format(self.token),
+                    "Content-Type": "application/json"
+                }
+            )
+
+            print(response.json())
+
     def sync_playlists(self):
         for yt_playlist_id, download in get_inputs().items():
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 print("{} has been synced before".format(yt_playlist_id))
+
+                last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
+
             else:
                 print("{} has not been synced before".format(yt_playlist_id))
 
-                spotify_ids = self.get_all_songs_information(yt_playlist_id)
+                song_uris = self.get_all_songs_information(yt_playlist_id)
 
                 yt_playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_playlist_id = self.create_playlist(yt_playlist_name)
 
-                print("Spotify ids of all songs in {0}:\n{1}".format(yt_playlist_name, spotify_ids))
+                self.add_songs_to_spotify_playlist(song_uris, spotify_playlist_id)
+
+                self.storage.store_new_entry(yt_playlist_id, spotify_playlist_id)
+
+                # create playlist with songs and update in storage.csv with current time
+                # delete entry from storage.csv
 
             break
 
+        self.storage.write_storage()
 
 if __name__ == '__main__':
     cp = CreatePlaylist()
     # cp.add_songs_to_playlist()
 
-    cp.sync_playlists()
+    from datetime import datetime
+    dt = datetime.fromtimestamp(1594602633.370837)
+    # print(dt)
+    print(cp.get_songs_information("PLucKeiEo64s9376jBeUh9ukrWv6L5k0Ox", dt))
 
