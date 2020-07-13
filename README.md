@@ -1,14 +1,14 @@
 # youtube-spotify-sync
 Sync youtube playlists onto spotify. Download songs which have been marked as youtube exclusive to allow for spotify play.
 
-# Instructions
+## Instructions
 1. Follow link for spotify authentication
 1. Enter {code} in format redirect_url/?code={code}
 1. Execute curl command printed in seperate terminal tab or window and paste in the recieved code
 1. Follow link for Google 0Auth authentication
 1. DONE
 
-# Features remaining
+## Features remaining
 * Downloading songs from marked playlists
 * Refactoring 
   * Refactor for readability
