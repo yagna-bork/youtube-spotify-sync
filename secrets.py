@@ -9,3 +9,5 @@ get_uri = "https://accounts.spotify.com/authorize?client_id={0}&response_type=co
     redirect_url,
     "%20".join(scope),
 )
+
+base64_id_secret = "YzhiMGJmOTFmMmY1NGYzNGJhNjMyNTZmM2QwMDllZTg6N2Q3ZTZiYTAxYjRiNDczNDk2MTYzNWIwNzQ4NDkxOTA="
