@@ -228,47 +228,6 @@ class CreatePlaylist:
 
         self.storage.write_storage()
 
-
-        #     if self.storage.has_playlist_been_synced(yt_playlist_id):
-        #         print("{} has been synced before".format(yt_playlist_id))
-
-        #         last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
-        #         print("{0} last synced at {1}".format(yt_playlist_id, last_synced))
-
-        #         song_uris = self.get_songs_information(yt_playlist_id, last_synced)
-        #         print("Retrieved following song uris: \n{0}".format(song_uris))
-
-        #         spotify_playlist_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
-        #         print("Got following spotify playlist id: {}".format(spotify_playlist_id))
-
-        #         self.add_songs_to_spotify_playlist(song_uris, spotify_playlist_id)
-        #         self.storage.update_last_synced(yt_playlist_id)
-
-        #     else:
-        #         print("{} has not been synced before".format(yt_playlist_id))
-
-        #         song_uris = self.get_songs_information(yt_playlist_id)
-        #         print("Retrieved following song uris: \n{0}".format(song_uris))
-
-        #         yt_playlist_name = self.get_playlist_name(yt_playlist_id)
-
-        #         spotify_playlist_id = self.create_playlist(yt_playlist_name)
-
-        #         if spotify_playlist_id == -1:
-        #             print("Error creating playlist. Try again")
-        #             return
-
-        #         print("Got new spotify playlist id: {0}".format(spotify_playlist_id))
-
-        #         # no need for debug statements here
-        #         self.add_songs_to_spotify_playlist(song_uris, spotify_playlist_id)
-
-        #         # debug statements inside StorageManager class
-        #         self.storage.store_new_entry(yt_playlist_id, spotify_playlist_id)
-
-        # self.storage.write_storage()
-
-
 if __name__ == '__main__':
     cp = CreatePlaylist()
     cp.sync_playlists()
