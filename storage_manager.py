@@ -1,4 +1,6 @@
 import csv
+import os
+import pickle
 from datetime_manager import datetime_to_timestamp_str, timestamp_str_to_datetime, generate_times_stamps, get_time_now
 
 # TODO allow for multiple StorageManager objects to operate simultaneously
@@ -8,26 +10,15 @@ from datetime_manager import datetime_to_timestamp_str, timestamp_str_to_datetim
 
 class StorageManager:
     def __init__(self):
-        self.storage = self.read_storage()
+        self.store_path = './downloaded_songs_store'
 
-        # TODO remove need for this
-        self.destroyed = False
+    def read_storage(self):
+        db = {}
+        if os.path.getsize(self.store_path) > 0:
+            with open(self.store_path, 'rb') as store:
+                db = pickle.load(store)
 
-    @staticmethod
-    def read_storage():
-        storage_dict = {}
-
-        with open('storage.csv', 'r') as file:
-            reader = csv.reader(file)
-
-            for idx, row in enumerate(reader):
-                # store row as entry into storage dict
-                storage_dict[row[0]] = {
-                    "spotify_playlist_id": row[1],
-                    "last_synced_ts": timestamp_str_to_datetime(row[2])
-                }
-
-        return storage_dict
+        return db
 
     # must call at end
     def write_storage(self):
@@ -70,6 +61,35 @@ class StorageManager:
 
         print("Storage after update of last synced timestamp for {0}:\n{1}".format(yt_playlist_id, self.storage))
 
+    def get_db(self):
+        db = {}
+        if os.path.getsize(self.store_path) > 0:
+            with open(self.store_path, 'rb') as store:
+                db = pickle.load(store)
+
+        return db
+
+    def get_downloaded_songs(self, spotify_id):
+        db = self.get_db()
+        return db[spotify_id]
+
+    def record_downloaded_song(self, spotify_id, video_id):
+        with open('downloaded_songs_store', 'wb') as store:
+            db = self.get_db()
+            db[spotify_id].append(video_id) 
+            pickle.dump(db, store)
+
+    def record_downloaded_songs(self, spotify_id, video_ids):
+        with open('downloaded_songs_store', 'wb') as store:
+            db = self.get_db()
+
+            if spotify_id not in db:
+                db[spotify_id] = []
+
+            for video_id in video_ids:
+                db[spotify_id].append(video_id) 
+
+            pickle.dump(db, store)
 
 if __name__ == '__main__':
     storage = StorageManager()
