@@ -12,7 +12,7 @@ class StorageManager:
     def __init__(self):
         self.db_file_path = 'songs_db'
 
-    def read_storage(self):
+    def read_database(self):
         db = {}
         if os.path.getsize(self.db_file_path) > 0:
             with open(self.db_file_path, 'rb') as store:
@@ -38,7 +38,8 @@ class StorageManager:
             self.destroyed = True
 
     def has_playlist_been_synced(self, yt_playlist_id):
-        return yt_playlist_id in self.storage
+        db = self.read_database()
+        return yt_playlist_id in db['synced_playlists']
 
     def store_new_entry(self, yt_playlist_id, spotify_pl_id):
         now = get_time_now()
@@ -92,9 +93,10 @@ class StorageManager:
             pickle.dump(db, store)
 
     @staticmethod
-    def init_pickle_file(file):
+    def seed_pickle_file(file):
+        # schema for pickle database
         init_obj = {
-            "synced_playlists": [{
+            "synced_playlists": {
                 "PLucKeiEo64s_2ZXtW0Vv3kJ8rqFEvDJbf": {
                     "spotify_id": "4dVm4zXMIU3HqjbVtRrtRV",
                     "last_synced": 1599412611.302752,
@@ -116,7 +118,7 @@ class StorageManager:
                     "last_synced": 1594657869.171505,
                     "is_downloaded": True
                 }
-            }],
+            },
             "slowed_songs": {},
         }
 
