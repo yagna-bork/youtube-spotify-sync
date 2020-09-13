@@ -49,7 +49,6 @@ class StorageManager:
             "spotify_playlist_id": spotify_playlist_id,
             "last_synced_ts": now,
         }
-        breakpoint()
 
         with open(self.db_file_path, 'wb') as db_file:
             pickle.dump(db, db_file)
