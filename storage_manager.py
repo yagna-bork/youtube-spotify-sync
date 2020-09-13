@@ -126,5 +126,3 @@ class StorageManager:
 
 if __name__ == '__main__':
     storage = StorageManager()
-    storage.init_pickle_file(storage.db_file_path)
-    print(storage.read_storage())
