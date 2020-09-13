@@ -23,7 +23,7 @@ def timestamp_str_to_datetime(timestamp):
     return datetime.fromtimestamp(float(timestamp))
 
 
-def datetime_to_timestamp_str(dt):
+def datetime_to_timestamp(dt):
     return datetime.timestamp(dt)
 
 
