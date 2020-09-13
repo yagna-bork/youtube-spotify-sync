@@ -1,7 +1,7 @@
 import csv
 import os
 import pickle
-from datetime_manager import datetime_to_timestamp_str, timestamp_str_to_datetime, generate_times_stamps, get_time_now
+from datetime_manager import datetime_to_timestamp, timestamp_str_to_datetime, generate_times_stamps, get_time_now
 
 # TODO allow for multiple StorageManager objects to operate simultaneously
 # storage:
@@ -41,15 +41,18 @@ class StorageManager:
         db = self.read_database()
         return yt_playlist_id in db['synced_playlists']
 
-    def store_new_entry(self, yt_playlist_id, spotify_pl_id):
+    # change name in other files, extra parameter
+    def store_new_entry(self, yt_playlist_id, spotify_playlist_id):
+        db = self.get_db()
         now = get_time_now()
-
-        self.storage[yt_playlist_id] = {
-            "spotify_playlist_id": spotify_pl_id,
-            "last_synced_ts": now
+        db['synced_playlists'][yt_playlist_id] = {
+            "spotify_playlist_id": spotify_playlist_id,
+            "last_synced_ts": now,
         }
+        breakpoint()
 
-        print("storage after new entry:\n{}".format(self.storage))
+        with open(self.db_file_path, 'wb') as db_file:
+            pickle.dump(db, db_file)
 
     def get_last_synced_timestamp(self, yt_playlist_id):
         return self.storage[yt_playlist_id]['last_synced_ts']
@@ -92,31 +95,26 @@ class StorageManager:
 
             pickle.dump(db, store)
 
-    @staticmethod
-    def seed_pickle_file(file):
+    def seed_pickle_file(self):
+        file = self.db_file_path
         # schema for pickle database
         init_obj = {
             "synced_playlists": {
                 "PLucKeiEo64s_2ZXtW0Vv3kJ8rqFEvDJbf": {
-                    "spotify_id": "4dVm4zXMIU3HqjbVtRrtRV",
+                    "spotify_playlist_id": "4dVm4zXMIU3HqjbVtRrtRV",
                     "last_synced": 1599412611.302752,
-                    "is_downloaded": False,
                 }, "LLEA6rXRPPbQur1xyOgurtQg": {
-                    "spotify_id": "4EOYcqOkQMOPB8bWmzZc3U",
+                    "spotify_playlist_id": "4EOYcqOkQMOPB8bWmzZc3U",
                     "last_synced": 1599412631.782011,
-                    "is_downloaded": False,
                 }, "PLucKeiEo64s9D4vtua7xIFZe-9YZdOmZP": {
-                    "spotify_id": "5vAwYEmFbF2yRex2p7fwYB",
+                    "spotify_playlist_id": "5vAwYEmFbF2yRex2p7fwYB",
                     "last_synced": 1594657869.692405,
-                    "is_downloaded": False,
                 }, "PLucKeiEo64s9376jBeUh9ukrWv6L5k0Ox": {
-                    "spotify_id": "2B46Xhd7rw6IRYWkcAGDO4",
+                    "spotify_playlist_id": "2B46Xhd7rw6IRYWkcAGDO4",
                     "last_synced": 1599412631.888807,
-                    "is_downloaded": False,
                 }, "PLucKeiEo64s8tejNdkXCKo5xClilZ4Nni": {
-                    "spotify_id": "4C5kAlMObPKLDRwsdkDg9y",
+                    "spotify_playlist_id": "4C5kAlMObPKLDRwsdkDg9y",
                     "last_synced": 1594657869.171505,
-                    "is_downloaded": True
                 }
             },
             "slowed_songs": {},
@@ -125,6 +123,7 @@ class StorageManager:
         with open(file, 'wb') as store:
             pickle.dump(init_obj, store)
 
+        print("db after seeding: {}".format(self.read_database()))
 
 if __name__ == '__main__':
     storage = StorageManager()
