@@ -6,6 +6,5 @@ __pycache__/*
 output/*
 input.csv
 storage.csv
-songs_db
 client_secret.json
 secrets.py
