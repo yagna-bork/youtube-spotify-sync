@@ -1,4 +1,4 @@
-#!/Users/yaggy/programming/ytToSpotify/venv/bin/python
+#!/home/personal/projects/youtube-spotify-sync/venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

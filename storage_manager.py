@@ -3,21 +3,24 @@ import os
 import pickle
 from datetime_manager import datetime_to_timestamp, timestamp_str_to_datetime, generate_times_stamps, get_time_now
 
+
 # TODO allow for multiple StorageManager objects to operate simultaneously
 # storage:
 # yt_playlist_id, spotify_playlist_id, last_synced_ts
 
 
 class StorageManager:
-    def __init__(self):
-        self.db_file_path = 'songs_db'
+    def __init__(self, db_file_path='songs_db'):
+        self.db_file_path = db_file_path
 
-    def read_database(self):
-        db = {}
+    def get_database(self):
         if os.path.getsize(self.db_file_path) > 0:
             with open(self.db_file_path, 'rb') as store:
                 db = pickle.load(store)
-
+        else:
+            db = {}
+            with open(self.db_file_path, 'w+') as store:
+                pickle.dump(db, store)
         return db
 
     # must call at end
@@ -38,12 +41,11 @@ class StorageManager:
             self.destroyed = True
 
     def has_playlist_been_synced(self, yt_playlist_id):
-        db = self.read_database()
+        db = self.get_database()
         return yt_playlist_id in db['synced_playlists']
 
-    # change name in other files, extra parameter
     def store_new_entry(self, yt_playlist_id, spotify_playlist_id):
-        db = self.get_db()
+        db = self.get_database()
         now = get_time_now()
         db['synced_playlists'][yt_playlist_id] = {
             "spotify_playlist_id": spotify_playlist_id,
@@ -54,7 +56,8 @@ class StorageManager:
             pickle.dump(db, db_file)
 
     def get_last_synced_timestamp(self, yt_playlist_id):
-        return self.storage[yt_playlist_id]['last_synced_ts']
+        db = self.get_database()
+        return db['synced_playlists'][yt_playlist_id]['last_synced']
 
     def get_spotify_playlist_id(self, yt_playlist_id):
         return self.storage[yt_playlist_id]['spotify_playlist_id']
@@ -64,33 +67,25 @@ class StorageManager:
 
         print("Storage after update of last synced timestamp for {0}:\n{1}".format(yt_playlist_id, self.storage))
 
-    def get_db(self):
-        db = {}
-        if os.path.getsize(self.db_file_path) > 0:
-            with open(self.db_file_path, 'rb') as store:
-                db = pickle.load(store)
-
-        return db
-
     def get_downloaded_songs(self, spotify_id):
-        db = self.get_db()
+        db = self.get_database()
         return db[spotify_id]
 
     def record_downloaded_song(self, spotify_id, video_id):
         with open('downloaded_songs_store', 'wb') as store:
-            db = self.get_db()
-            db[spotify_id].append(video_id) 
+            db = self.get_database()
+            db[spotify_id].append(video_id)
             pickle.dump(db, store)
 
     def record_downloaded_songs(self, spotify_id, video_ids):
         with open('downloaded_songs_store', 'wb') as store:
-            db = self.get_db()
+            db = self.get_database()
 
             if spotify_id not in db:
                 db[spotify_id] = []
 
             for video_id in video_ids:
-                db[spotify_id].append(video_id) 
+                db[spotify_id].append(video_id)
 
             pickle.dump(db, store)
 
@@ -122,7 +117,9 @@ class StorageManager:
         with open(file, 'wb') as store:
             pickle.dump(init_obj, store)
 
-        print("db after seeding: {}".format(self.read_database()))
+        print("db after seeding: {}".format(self.get_database()))
+
 
 if __name__ == '__main__':
     storage = StorageManager()
+    # TODO test in CreatePlaylist.py

@@ -1,6 +1,4 @@
 from datetime import datetime, timezone
-from tzlocal import get_localzone
-import pytz
 import time
 
 
