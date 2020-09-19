@@ -1,7 +1,7 @@
 venv
 .DS_Store
 .idea
-__pycache__/*
+__pycache__
 output/*
 input.csv
 storage.csv
@@ -10,3 +10,4 @@ client_secret.json
 secrets.py
 .vscode
 tests/db_instances
+storage
