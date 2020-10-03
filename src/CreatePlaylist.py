@@ -218,7 +218,6 @@ class CreatePlaylist:
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
             playlist_synced_before = self.storage.has_playlist_been_synced(yt_playlist_id)
-
             if playlist_synced_before:
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
                 spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
@@ -227,11 +226,11 @@ class CreatePlaylist:
                 playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_id = self.create_playlist(playlist_name)
 
+            songs = self.get_songs_information(yt_playlist_id, last_synced)
             if download:
                 yt_uris = [song["yt_url"] for song in songs]
                 continue
             else:
-                songs = self.get_songs_information(yt_playlist_id, last_synced)
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
 
