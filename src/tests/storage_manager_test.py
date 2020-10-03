@@ -1,8 +1,7 @@
 import pytest
 from datetime import datetime
 import pickle
-from storage_manager import StorageManager
-from datetime_manager import get_time_now
+from ..storage_manager import StorageManager
 import os
 from os.path import dirname
 
@@ -10,8 +9,8 @@ from os.path import dirname
 @pytest.fixture
 def seed_database():
     return {"synced_playlists": {
-        "abc": {"spotify_playlist_id": "123", "last_synced_ts": 123456},
-        "xyz": {"spotify_playlist_id": "789", "last_synced_ts": 654321}
+        "abc": {"spotify_playlist_id": "123", "last_synced_ts": 123456.123},
+        "xyz": {"spotify_playlist_id": "789", "last_synced_ts": 654321.123}
     }}
 
 
@@ -83,29 +82,31 @@ class TestStorageManager:
     def test_store_new_entry(self, db_get_paths_and_remove_file):
         db_path_root, db_path_here = db_get_paths_and_remove_file
         yt_id, spotify_id = "abc", "123"
-        mock = {"synced_playlists": {yt_id: {'spotify_playlist_id': spotify_id}}}
+        mock = {"synced_playlists": {yt_id: {'spotify_playlist_id': spotify_id, "last_synced_ts": None}}}
 
+        before_ts = datetime.timestamp(datetime.utcnow())
         db_manager = StorageManager(db_path_root)
         db_manager.store_new_entry(yt_id, spotify_id)
-
+        after_ts = datetime.timestamp(datetime.utcnow())
         db = self.manual_read(db_path_here)
-        print(db)
-        mock["synced_playlists"][yt_id]["last_synced_ts"] = db["synced_playlists"][yt_id]["last_synced_ts"]
+        stored_ts = db["synced_playlists"][yt_id]["last_synced_ts"]
+        mock["synced_playlists"][yt_id]["last_synced_ts"] = stored_ts
+
+        assert before_ts < stored_ts < after_ts
+        assert isinstance(stored_ts, float)
         assert db == mock
 
     @pytest.mark.parametrize('db_get_paths_and_remove_file', ['test_get_last_synced_timestamp'], indirect=True)
-    def test_get_last_synced_timestamp(self, db_get_paths_and_remove_file):
+    def test_get_last_synced_timestamp(self, db_get_paths_and_remove_file, seed_database):
         db_path_root, db_path_here = db_get_paths_and_remove_file
-        before_ts = datetime.timestamp(get_time_now())
         db_manager = StorageManager(db_path_root)
-        yt_id, spotify_id = "abc", "123"
-        db_manager.store_new_entry(yt_id, spotify_id)
-        after_ts = datetime.timestamp(get_time_now())
+        self.manual_write(seed_database, db_path_here)
+        retrieved_ts_abc = db_manager.get_last_synced_timestamp("abc")
+        retrieved_ts_xyz = db_manager.get_last_synced_timestamp("xyz")
 
-        db = self.manual_read(db_path_here)
-        stored_ts = db["synced_playlists"][yt_id]["last_synced_ts"]
-        assert before_ts < stored_ts < after_ts
-        assert isinstance(stored_ts, float)
+        assert isinstance(retrieved_ts_xyz, float) and isinstance(retrieved_ts_abc, float)
+        assert retrieved_ts_abc == seed_database["synced_playlists"]["abc"]["last_synced_ts"]
+        assert retrieved_ts_xyz == seed_database["synced_playlists"]["xyz"]["last_synced_ts"]
 
     @pytest.mark.parametrize('db_get_paths_and_remove_file', ['test_get_spotify_playlist_id'], indirect=True)
     def test_get_spotify_playlist_id(self, db_get_paths_and_remove_file):
@@ -117,13 +118,11 @@ class TestStorageManager:
         assert db_manager.get_spotify_playlist_id("abc") == "123"
 
     # TODO apply mock here
-    # @pytest.mark.parametrize('db_get_paths_and_remove_file', ['test_get_spotify_playlist_id'], indirect=True)
-    # def test_update_last_synced(self, db_get_paths_and_remove_file, seed_database):
-    #     db_path_root, db_path_here = db_get_paths_and_remove_file
-    #     now = get_time_now()
-    #     self.manual_write(seed_database, db_path_here)
-    #     db_manager = StorageManager(db_path_root)
-    #     db_manager.update_last_synced("abc")
-    #     db = self.manual_read(db_path_here)
-    #     edited_seed_database = seed_database["synced_playlists"]["abc"]["last_synced_ts"] = now
-    #     assert db == edited_seed_database
+    @pytest.mark.parametrize('db_get_paths_and_remove_file', ['test_get_spotify_playlist_id'], indirect=True)
+    def test_update_last_synced(self, db_get_paths_and_remove_file, seed_database):
+        db_path_root, db_path_here = db_get_paths_and_remove_file
+        self.manual_write(seed_database, db_path_here)
+        db_manager = StorageManager(db_path_root)
+        db_manager.update_last_synced("abc")
+        db = self.manual_read(db_path_here)
+        assert isinstance(db["synced_playlists"]["abc"]["last_synced_ts"], float)
