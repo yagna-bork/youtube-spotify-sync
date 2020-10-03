@@ -19,15 +19,18 @@ input_field_to_col = {
     "download": 1
 }
 
+
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         # self.token = self.get_spotify_token()
-        # self.youtube_client = self.get_youtube_api()
+        self.token = "BQDxcgwZO1QLdTOKKmbsDwE8Pxw5qxI9NuTPPG4i2EEKPFcvEoCl9ipubtLSyhFnT03vIxnrwpAhb1OMkEQ_F--hGUjz9TVYkh_lJzmhcBZThPm8iQ1lALQW1WdiyN6zGyX18XpMg3pjuPuV3rI-V3sHIxRUMcHKjCt_Nph9NhnYTehR3Djk91FeSh04joEfl8xFjA7Glw"
+        self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
 
-    def get_spotify_token(self):
+    @staticmethod
+    def get_spotify_token():
         print("Access this uri for spotify authorization:\n{}".format(get_uri))
 
         post_uri = "https://accounts.spotify.com/api/token"
@@ -45,7 +48,8 @@ class CreatePlaylist:
 
         return spotify_token
 
-    def get_youtube_api(self):
+    @staticmethod
+    def get_youtube_api():
         """ Log Into Youtube, Copied from Youtube Data API """
         # Disable OAuthlib's HTTPS verification when running locally.
         # *DO NOT* leave this option enabled in production.
@@ -79,8 +83,8 @@ class CreatePlaylist:
                 return spotify_uri
             else:
                 return None
-        except:
-            print("Could not find song name and artist from {0}".format(video_title))
+        except:  # TODO fix this pylint broad exception
+            # print("Could not find song name and artist from {0}".format(video_title))
             return None
 
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
@@ -101,17 +105,17 @@ class CreatePlaylist:
             for video in response['items']:
                 video_title = video["snippet"]["title"]
                 published_at_str = video["snippet"]["publishedAt"]
-                published_at = parse_youtube_datetime(published_at_str)
+                published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
 
                 # only add song if its been added to playlist after last sync
-                if timestamp is None or published_at > timestamp:
+                if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
                     # print("{0} was added after {1}".format(video_title, timestamp))
 
                     spotify_id = self.get_spotify_id(video_title)
 
                     if spotify_id is not None:
-                        song = { "spotify_id": spotify_id, "yt_url": youtube_url }
+                        song = {"spotify_id": spotify_id, "yt_url": youtube_url}
                         songs.append(song)
 
             # refine request so it fetches next page of results or prevent anymore requests
@@ -157,7 +161,7 @@ class CreatePlaylist:
 
         if 'error' in response_json:
             print("Response after sending request to create playlist: \n{}".format(response_json))
-            return -1 # TODO replace all -1 with proper error handling
+            return -1  # TODO replace all -1 with proper error handling
         else:
             return response_json["id"]
 
@@ -165,7 +169,7 @@ class CreatePlaylist:
         q = "{0}+{1}".format(song_name, artist)
         spotify_type = "track"
         market = "GB"
-        limit = 1 #TODO: Might cause issue
+        limit = 1  # TODO: Might cause issue
 
         endpoint = "https://api.spotify.com/v1/search?q={0}&type={1}&market={2}&limit={3}".format(
             q, spotify_type, market, limit)
@@ -189,7 +193,7 @@ class CreatePlaylist:
 
     def add_songs_to_spotify_playlist(self, song_uris, spotify_playlist_id):
         while len(song_uris) > 0:
-            batch_size = min(100, len(song_uris)) # N <= 100
+            batch_size = min(100, len(song_uris))  # N <= 100
 
             # send first N songs to spotify
             request_data = json.dumps(song_uris[:batch_size])
@@ -212,9 +216,10 @@ class CreatePlaylist:
 
     def sync_playlists(self):
         for yt_playlist_id, download in get_inputs().items():
-            playlist_synced = self.storage.has_playlist_been_synced(yt_playlist_id)
+            print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
+            playlist_synced_before = self.storage.has_playlist_been_synced(yt_playlist_id)
 
-            if playlist_synced:
+            if playlist_synced_before:
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
                 spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
             else:
@@ -222,23 +227,21 @@ class CreatePlaylist:
                 playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_id = self.create_playlist(playlist_name)
 
-            songs = self.get_songs_information(yt_playlist_id, last_synced)
-
             if download:
-                video_urls = [ song['yt_url'] for song in songs ]
+                yt_uris = [song["yt_url"] for song in songs]
+                continue
             else:
-                song_uris = [ song['spotify_uri'] for song in songs ]
+                songs = self.get_songs_information(yt_playlist_id, last_synced)
+                song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
+
+            if playlist_synced_before:
                 self.storage.update_last_synced(yt_playlist_id)
+            else:
+                self.storage.store_new_entry(yt_playlist_id, spotify_id)
 
-        self.storage.write_storage()
 
-    def pickle_test(self):
-        self.storage.record_downloaded_songs('spo_id', [ 'v=?aBAcx&at=1&' + str(n) for n in range(100, 110) ])
-        print(self.storage.get_downloaded_songs('spo_id'))
-
+# TODO implement as cron job
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    cp.pickle_test()
-
-
+    cp.sync_playlists()

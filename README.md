@@ -12,6 +12,11 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 
 ## Features remaining
 * Downloading songs from marked playlists
+* Web interface for OAuth
+* User can configure which local file source, give instructions how to set this up
+* Give users message about which songs should be added to which playlist from local songs
+* Use podcasts as workaround user having manually move songs from local files to playlists
+* Implement as Cron job, UI dashboard should configure how often synced, when is next sync etc...
 * Refactoring 
   * Refactor for readability
   * Improve runtime efficency of CreatePlaylist.add_songs_to_spotify_playlist list deletion
@@ -19,4 +24,3 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 * storage.csv created by itself & terminal prompt to create input.csv?
 * Flesh out instructions OR
   * Implement UI so getting spotify tokens is user friendly -> implement phone app frontend?
-
