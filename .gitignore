@@ -2,7 +2,6 @@
 .idea/
 __pycache__/
 output/
-input.csv
 storage.csv
 client_secret.json
 secrets.py

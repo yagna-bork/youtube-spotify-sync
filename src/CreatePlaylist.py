@@ -2,6 +2,7 @@ import requests
 import json
 import os
 from datetime import datetime, timezone
+import youtube_dl
 
 from secrets import user_id, get_uri, redirect_url, base64_id_secret
 from storage_manager import StorageManager
@@ -23,11 +24,12 @@ input_field_to_col = {
 class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
-        # self.token = self.get_spotify_token()
-        self.token = "BQDxcgwZO1QLdTOKKmbsDwE8Pxw5qxI9NuTPPG4i2EEKPFcvEoCl9ipubtLSyhFnT03vIxnrwpAhb1OMkEQ_F--hGUjz9TVYkh_lJzmhcBZThPm8iQ1lALQW1WdiyN6zGyX18XpMg3pjuPuV3rI-V3sHIxRUMcHKjCt_Nph9NhnYTehR3Djk91FeSh04joEfl8xFjA7Glw"
+        self.token = self.get_spotify_token()
+        # self.token = "BQDrinai7m8XjfaCVdQR2cEF9DvraTu93UVSL0IUsgAlPOL3Z9EvQHqMa3aXJ-Md4utDPHOl984dqTWMDCBtXE6r3Db6pUfGLrz-qDHa9_BuNn81OBT_hFFDOOzu0k8xjVI9kRZACJawjlDUaZ-oymVUVZJabblgd6W4bC_IJPh6JYVpCZgrMqvyYrmuScdi0UErVRZ-Gg"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
+        self.local_files_path = "~/Music/spotify"
 
     @staticmethod
     def get_spotify_token():
@@ -88,7 +90,7 @@ class CreatePlaylist:
             return None
 
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
-    def get_songs_information(self, playlist_id, timestamp=None):
+    def get_songs_information(self, playlist_id, download, timestamp=None):
         songs = []
         # spotify_ids = []
 
@@ -108,15 +110,15 @@ class CreatePlaylist:
                 published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
 
-                # only add song if its been added to playlist after last sync
-                if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
-                    # print("{0} was added after {1}".format(video_title, timestamp))
-
-                    spotify_id = self.get_spotify_id(video_title)
-
-                    if spotify_id is not None:
-                        song = {"spotify_id": spotify_id, "yt_url": youtube_url}
-                        songs.append(song)
+                if not download:
+                    # only add song if its been added to playlist after last sync
+                    if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
+                        spotify_id = self.get_spotify_id(video_title)
+                        if spotify_id is not None:
+                            song = {"spotify_id": spotify_id, "yt_url": youtube_url}
+                            songs.append(song)
+                else:
+                    songs.append({"yt_url": youtube_url, "vid_title": video_title})
 
             # refine request so it fetches next page of results or prevent anymore requests
             if 'nextPageToken' in response:
@@ -217,8 +219,7 @@ class CreatePlaylist:
     def sync_playlists(self):
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
-            playlist_synced_before = self.storage.has_playlist_been_synced(yt_playlist_id)
-            if playlist_synced_before:
+            if self.storage.has_playlist_been_synced(yt_playlist_id):
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
                 spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
             else:
@@ -226,15 +227,30 @@ class CreatePlaylist:
                 playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_id = self.create_playlist(playlist_name)
 
-            songs = self.get_songs_information(yt_playlist_id, last_synced)
+            songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             if download:
-                yt_uris = [song["yt_url"] for song in songs]
-                continue
+                # Equivelent to youtube-dl -x --audio-format mp3 --audio-quality 320K "url"
+                options = {
+                    "outtmpl": f"~/projects/youtube-spotify-sync/dl_dump/%(title)s.%(ext)s",
+                    # "outtmpl": f"{self.local_files_path}/%(title)s.%(ext)s",
+                    "geo_bypass": True,
+                    "postprocessors":
+                        [{'key': 'FFmpegExtractAudio',
+                          'nopostoverwrites': False,
+                          'preferredcodec': 'mp3',
+                          'preferredquality': '320'}],
+                    "noplaylist": True,
+                }
+                downloader = youtube_dl.YoutubeDL(options)
+                for song in songs:
+                    # TODO send email
+                    print(f"downloading: {song['vid_tile']}")
+                    downloader.download([song["yt_url"]])
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
 
-            if playlist_synced_before:
+            if self.storage.has_playlist_been_synced(yt_playlist_id):
                 self.storage.update_last_synced(yt_playlist_id)
             else:
                 self.storage.store_new_entry(yt_playlist_id, spotify_id)
