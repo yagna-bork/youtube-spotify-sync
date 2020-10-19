@@ -3,6 +3,8 @@ import json
 import os
 from datetime import datetime, timezone
 import youtube_dl
+import typing as t
+import re
 
 from secrets import user_id, get_uri, redirect_url, base64_id_secret
 from storage_manager import StorageManager
@@ -167,8 +169,18 @@ class CreatePlaylist:
         else:
             return response_json["id"]
 
+    @staticmethod
+    def parse_query(*args: t.List[str]) -> str:
+        query = ""
+        for arg in args:
+            no_whitespace_ascii_arg = re.sub("[^0-9A-Za-z ]| +$|^ +", "", arg)
+            no_space_arg = re.sub(" +", "+", no_whitespace_ascii_arg)
+            formatted_arg = f"{no_space_arg}+" if no_space_arg[:-1] != "+" else no_space_arg
+            query += formatted_arg
+        return query
+
     def get_song_spotify_uri(self, song_name, artist):
-        q = "{0}+{1}".format(song_name, artist)
+        q = self.parse_query(song_name, artist)
         spotify_type = "track"
         market = "GB"
         limit = 1  # TODO: Might cause issue

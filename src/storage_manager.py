@@ -15,7 +15,7 @@ class StorageManager:
 
         self.db_file_path = os.path.dirname(__file__) + "/" + db_file_path
 
-        # initialise as empty db if file doesn't exist
+        # initialise empty db if file doesn't exist
         if not os.path.isfile(self.db_file_path) or os.path.getsize(self.db_file_path) == 0:
             empty_db = {
                 "synced_playlists": {},
