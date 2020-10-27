@@ -27,11 +27,12 @@ class CreatePlaylist:
     def __init__(self):
         self.user_id = user_id
         self.token = self.get_spotify_token()
-        # self.token = "BQDrinai7m8XjfaCVdQR2cEF9DvraTu93UVSL0IUsgAlPOL3Z9EvQHqMa3aXJ-Md4utDPHOl984dqTWMDCBtXE6r3Db6pUfGLrz-qDHa9_BuNn81OBT_hFFDOOzu0k8xjVI9kRZACJawjlDUaZ-oymVUVZJabblgd6W4bC_IJPh6JYVpCZgrMqvyYrmuScdi0UErVRZ-Gg"
+        # self.token = "BQA4u8BRzE_WQGFzbJfu4YL1xo4gZPSo_8B3z4_7LWyC6oRbxSErLfjlkTFGatTcsGGpxrMyZeu1QDXy-U8HKZY7DQ7UW-_2OavXzfhhzblarrWzfQZfoab7havJhHAA54edWqqMgi82cbeYlAe7skHz7aj7yx806s6suAi6iSik0XpUDHIXkf0uUrLtcKDxS8udeQOPWA"
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
         self.local_files_path = "~/Music/spotify"
+        self.instructions_file_path = "../instruction_logs"
 
     @staticmethod
     def get_spotify_token():
@@ -167,7 +168,7 @@ class CreatePlaylist:
             print("Response after sending request to create playlist: \n{}".format(response_json))
             return -1  # TODO replace all -1 with proper error handling
         else:
-            return response_json["id"]
+            return response_json["id"], response_json["name"]
 
     @staticmethod
     def parse_query(*args: t.List[str]) -> str:
@@ -228,23 +229,34 @@ class CreatePlaylist:
 
             print(response.json())
 
-    def sync_playlists(self):
+    def save_instructions_to_file(self, instructions):
+        path = f"{self.instructions_file_path}/{str(datetime.now())}"
+        with open(path, "w+") as file:
+            for inst in instructions:
+                file.write(f"{inst}\n")
+        return path
+
+    def sync_playlists(self, slient=True):
+        download_instructions = []
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
-                spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id)
+                spotify_id, name_created_with = (
+                    self.storage.get_spotify_playlist_id(yt_playlist_id),
+                    self.storage.get_spotify_playlist_name(yt_playlist_id)
+                )
             else:
                 last_synced = None
                 playlist_name = self.get_playlist_name(yt_playlist_id)
-                spotify_id = self.create_playlist(playlist_name)
+                spotify_id, name_created_with = self.create_playlist(playlist_name)
 
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             if download:
                 # Equivelent to youtube-dl -x --audio-format mp3 --audio-quality 320K "url"
                 options = {
-                    "outtmpl": f"~/projects/youtube-spotify-sync/dl_dump/%(title)s.%(ext)s",
-                    # "outtmpl": f"{self.local_files_path}/%(title)s.%(ext)s",
+                    # "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",
+                    "outtmpl": f"{self.local_files_path}/%(title)s.%(ext)s",
                     "geo_bypass": True,
                     "postprocessors":
                         [{'key': 'FFmpegExtractAudio',
@@ -252,12 +264,18 @@ class CreatePlaylist:
                           'preferredcodec': 'mp3',
                           'preferredquality': '320'}],
                     "noplaylist": True,
+                    "quiet": slient,
+                    "no_warnings": slient,
                 }
                 downloader = youtube_dl.YoutubeDL(options)
                 for song in songs:
                     # TODO send email
-                    print(f"downloading: {song['vid_tile']}")
+                    instruction = f"Move {song['vid_title']} -> '{name_created_with}' spotify playlist"
+                    download_instructions.append(instruction)
                     downloader.download([song["yt_url"]])
+                    # only show this during slient mode, otherwise it will get drowned out by youtube_dl output
+                    if slient:
+                        print(instruction)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
@@ -265,7 +283,10 @@ class CreatePlaylist:
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 self.storage.update_last_synced(yt_playlist_id)
             else:
-                self.storage.store_new_entry(yt_playlist_id, spotify_id)
+                self.storage.store_new_entry(yt_playlist_id, spotify_id, name_created_with)
+        if download_instructions:
+            file = self.save_instructions_to_file(download_instructions)
+            print(f"You can find all instructions for your local files in {file}")
 
 
 # TODO implement as cron job

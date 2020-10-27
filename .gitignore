@@ -9,3 +9,5 @@ secrets.py
 db_instances/
 venv/
 songs_db
+input.csv
+dl_dump/
