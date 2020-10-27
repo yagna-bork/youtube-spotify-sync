@@ -81,12 +81,16 @@ class TestStorageManager:
     @pytest.mark.parametrize('db_get_paths_and_remove_file', ['test_store_new_entry'], indirect=True)
     def test_store_new_entry(self, db_get_paths_and_remove_file):
         db_path_root, db_path_here = db_get_paths_and_remove_file
-        yt_id, spotify_id = "abc", "123"
-        mock = {"synced_playlists": {yt_id: {'spotify_playlist_id': spotify_id, "last_synced_ts": None}}}
+        yt_id, spotify_id, spotify_name = "abc", "123", "abc"
+        mock = {
+            "synced_playlists": {
+                yt_id: {'spotify_playlist_id': spotify_id, "last_synced_ts": None, "spotify_name": spotify_name}
+            }
+        }
 
         before_ts = datetime.timestamp(datetime.utcnow())
         db_manager = StorageManager(db_path_root)
-        db_manager.store_new_entry(yt_id, spotify_id)
+        db_manager.store_new_entry(yt_id, spotify_id, spotify_name)
         after_ts = datetime.timestamp(datetime.utcnow())
         db = self.manual_read(db_path_here)
         stored_ts = db["synced_playlists"][yt_id]["last_synced_ts"]

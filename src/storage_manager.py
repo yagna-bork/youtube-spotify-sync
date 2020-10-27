@@ -35,12 +35,13 @@ class StorageManager:
         db = self.get_database()
         return yt_playlist_id in db['synced_playlists']
 
-    def store_new_entry(self, yt_playlist_id, spotify_playlist_id):
+    def store_new_entry(self, yt_playlist_id, spotify_playlist_id, spotify_name):
         db = self.get_database()
         now_ts = datetime.timestamp(datetime.utcnow())
         db['synced_playlists'][yt_playlist_id] = {
             "spotify_playlist_id": spotify_playlist_id,
             "last_synced_ts": now_ts,
+            "spotify_name": spotify_name
         }
 
         self.write_database(db)
@@ -54,6 +55,12 @@ class StorageManager:
         if yt_playlist_id not in db["synced_playlists"]:
             return None
         return db["synced_playlists"][yt_playlist_id]["spotify_playlist_id"]
+
+    def get_spotify_playlist_name(self, yt_playlist_id):
+        db = self.get_database()
+        if yt_playlist_id not in db["synced_playlists"]:
+            return None
+        return db["synced_playlists"][yt_playlist_id]["spotify_name"]
 
     def update_last_synced(self, yt_playlist_id):
         db = self.get_database()
