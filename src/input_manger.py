@@ -11,6 +11,9 @@ def get_inputs():
             playlist_id = row[0]
             download_str = row[1]
 
+            if playlist_id[0] == "!":
+                continue
+
             if download_str == 'true':
                 inputs[playlist_id] = True
             elif download_str == 'false':

@@ -11,10 +11,9 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 1. DONE
 
 ## Features remaining
-* Downloading songs from marked playlists
 * Web interface for OAuth
-* User can configure which local file source, give instructions how to set this up
-* Give users message about which songs should be added to which playlist from local songs
+* For videos containing many songs, parse description timestamps to download songs individually
+* Give users email about which songs should be added to which playlist from local songs
 * Use podcasts as workaround user having manually move songs from local files to playlists
 * Implement as Cron job, UI dashboard should configure how often synced, when is next sync etc...
 * Refactoring 
