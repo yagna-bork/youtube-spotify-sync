@@ -6,7 +6,6 @@ storage.csv
 client_secret.json
 secrets.py
 .vscode/
-db_instances/
 venv/
 songs_db
 input.csv
