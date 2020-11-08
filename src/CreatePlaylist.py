@@ -5,29 +5,23 @@ from datetime import datetime, timezone
 import youtube_dl
 import typing as t
 import re
+import sys
+import google_auth_oauthlib.flow
+import googleapiclient.discovery
+import googleapiclient.errors
+from youtube_title_parse import get_artist_title
 
-from secrets import user_id, get_uri, redirect_url, base64_id_secret
+import secrets
 from storage_manager import StorageManager
 from input_manger import get_inputs
 from datetime_manager import gmt_to_local_timezone, parse_youtube_datetime
 
-import google_auth_oauthlib.flow
-import googleapiclient.discovery
-import googleapiclient.errors
-
-from youtube_title_parse import get_artist_title
-
-input_field_to_col = {
-    "playlist_id": 0,
-    "download": 1
-}
-
 
 class CreatePlaylist:
     def __init__(self):
-        self.user_id = user_id
-        self.token = self.get_spotify_token()
-        # self.token = "BQA4u8BRzE_WQGFzbJfu4YL1xo4gZPSo_8B3z4_7LWyC6oRbxSErLfjlkTFGatTcsGGpxrMyZeu1QDXy-U8HKZY7DQ7UW-_2OavXzfhhzblarrWzfQZfoab7havJhHAA54edWqqMgi82cbeYlAe7skHz7aj7yx806s6suAi6iSik0XpUDHIXkf0uUrLtcKDxS8udeQOPWA"
+        self.user_id = secrets.user_id
+        # self.token = self.get_spotify_token()
+        self.token = secrets.spotify_token
         self.youtube_client = self.get_youtube_api()
         self.liked_songs_info = {}
         self.storage = StorageManager()
@@ -36,21 +30,15 @@ class CreatePlaylist:
 
     @staticmethod
     def get_spotify_token():
-        print("Access this uri for spotify authorization:\n{}".format(get_uri))
-
-        post_uri = "https://accounts.spotify.com/api/token"
-
+        print("Access this uri for spotify authorization:\n{}".format(secrets.get_uri))
         code = input("Enter the code you got back: ")
-
         curl_cmd = "curl -H 'Authorization: Basic {0}' " \
                    "-d grant_type=authorization_code " \
                    "-d code={2} " \
                    "-d redirect_uri={1} " \
-                   "https://accounts.spotify.com/api/token".format(base64_id_secret, redirect_url, code)
-
+                   "https://accounts.spotify.com/api/token".format(secrets.base64_id_secret, secrets.redirect_url, code)
         print("Use this curl command:\n{}".format(curl_cmd))
         spotify_token = input("Enter the spotify token: ")
-
         return spotify_token
 
     @staticmethod
@@ -230,13 +218,14 @@ class CreatePlaylist:
             print(response.json())
 
     def save_instructions_to_file(self, instructions):
+        # TODO send email
         path = f"{self.instructions_file_path}/{str(datetime.now())}"
         with open(path, "w+") as file:
             for inst in instructions:
                 file.write(f"{inst}\n")
         return path
 
-    def sync_playlists(self, slient=True):
+    def sync_playlists(self, verbose=False):
         download_instructions = []
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
@@ -250,13 +239,19 @@ class CreatePlaylist:
                 last_synced = None
                 playlist_name = self.get_playlist_name(yt_playlist_id)
                 spotify_id, name_created_with = self.create_playlist(playlist_name)
+                if download:
+                    instruction = f"Set download option for playlist '{name_created_with}'"
+                    download_instructions.append(instruction)
+                    # only show instructions during slient mode, otherwise it will get drowned out by youtube_dl output
+                    if not verbose:
+                        print(instruction)
 
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             if download:
                 # Equivelent to youtube-dl -x --audio-format mp3 --audio-quality 320K "url"
                 options = {
-                    # "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",
-                    "outtmpl": f"{self.local_files_path}/%(title)s.%(ext)s",
+                    "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",  # dev
+                    # "outtmpl": f"{self.local_files_path}/%(title)s.%(ext)s",
                     "geo_bypass": True,
                     "postprocessors":
                         [{'key': 'FFmpegExtractAudio',
@@ -264,17 +259,15 @@ class CreatePlaylist:
                           'preferredcodec': 'mp3',
                           'preferredquality': '320'}],
                     "noplaylist": True,
-                    "quiet": slient,
-                    "no_warnings": slient,
+                    "quiet": not verbose,
+                    "no_warnings": not verbose,
                 }
                 downloader = youtube_dl.YoutubeDL(options)
                 for song in songs:
-                    # TODO send email
+                    downloader.download([song["yt_url"]])
                     instruction = f"Move {song['vid_title']} -> '{name_created_with}' spotify playlist"
                     download_instructions.append(instruction)
-                    downloader.download([song["yt_url"]])
-                    # only show this during slient mode, otherwise it will get drowned out by youtube_dl output
-                    if slient:
+                    if not verbose:
                         print(instruction)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
@@ -284,6 +277,7 @@ class CreatePlaylist:
                 self.storage.update_last_synced(yt_playlist_id)
             else:
                 self.storage.store_new_entry(yt_playlist_id, spotify_id, name_created_with)
+
         if download_instructions:
             file = self.save_instructions_to_file(download_instructions)
             print(f"You can find all instructions for your local files in {file}")
@@ -292,4 +286,5 @@ class CreatePlaylist:
 # TODO implement as cron job
 if __name__ == '__main__':
     cp = CreatePlaylist()
-    cp.sync_playlists()
+    is_verbose = any(arg in ["--verbose", "-v"] for arg in sys.argv)
+    cp.sync_playlists(is_verbose)

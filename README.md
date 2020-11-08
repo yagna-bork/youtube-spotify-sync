@@ -11,7 +11,6 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 1. DONE
 
 ## Features remaining
-* Web interface for OAuth
 * For videos containing many songs, parse description timestamps to download songs individually
 * Give users email about which songs should be added to which playlist from local songs
 * Use podcasts as workaround user having manually move songs from local files to playlists
@@ -19,7 +18,10 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 * Refactoring 
   * Refactor for readability
   * Improve runtime efficency of CreatePlaylist.add_songs_to_spotify_playlist list deletion
-* Prevent duplicates of songs in CreatePlaylist.add_songs_to_spotify_playlist (spotify api?)
-* storage.csv created by itself & terminal prompt to create input.csv?
-* Flesh out instructions OR
-  * Implement UI so getting spotify tokens is user friendly -> implement phone app frontend?
+* web interface prompt to create input.csv?
+
+## Django todo list
+* 0Auth web interface/login
+  * Simple button called sync which runs script
+* Add playlists web interface
+* Display of instruction logs
