@@ -16,7 +16,7 @@ def seed_database():
 
 @pytest.fixture
 def db_get_paths_and_remove_file(request):
-    db_path_here = 'db_instances/' + request.param
+    db_path_here = 'db_instances/' + request.param  # TODO setup.py, relative file import
     TestStorageManager.delete_file_if_exists(db_path_here)
     return TestStorageManager.get_root_here_paths(db_path_here)
 

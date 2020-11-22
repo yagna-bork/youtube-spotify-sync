@@ -3,13 +3,10 @@ import csv
 
 def get_inputs():
     inputs = {}
-
     with open('input.csv') as file:
         reader = csv.reader(file)
-
         for idx, row in enumerate(reader):
-            playlist_id = row[0]
-            download_str = row[1]
+            playlist_id, download_str = row[0], row[1]
 
             if playlist_id[0] == "!":
                 continue
@@ -20,7 +17,6 @@ def get_inputs():
                 inputs[playlist_id] = False
             else:
                 inputs[playlist_id] = None
-
     return inputs
 
 
