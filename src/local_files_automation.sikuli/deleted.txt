@@ -1,0 +1,38 @@
+#region_around_anchor = get_surrounding_square(scroll_anchor, WHEEL_Y_CHANGE * WHEEL_STEPS)
+
+# click second song fully on screen, press up twice and spotify will show top songs perfectly
+# anchored to top without making last song go out of screen required for rest of code
+# TODO does it work for small number of songs?
+#lines = find_all_lines()
+#song_height = lines[-1].getY() - lines[-2].getY() # last two lines reliably tell height of song
+#for i in range(len(lines)):
+#    if i == len(lines) - 1:
+ #       exit()
+  #  if lines[i+2].getY() - lines[i].getY() == song_height * 2:
+  #      second_fully_visable_song_idx = i+1
+ #       break
+#click(lines[second_fully_visable_song_idx].getTarget().offset(0,int(song_height/2)))
+#type(Key.UP*2)
+# click(lines[second_fully_visable_song_idx].getTopRight().offset(10,0)) # clear selection
+
+#songs_on_screen = len(lines) - 1
+#songs_off_screen = max(NUM_SONGS - songs_on_screen, 0)
+# get position of first song to add
+#if songs_off_screen > 0:
+ #   type(Key.UP*songs_off_screen)
+  #  wait(3)
+   # click(find_all_lines()[0].getTopRight().offset(5,0)) # clear selection
+   # line_above_first_song = find_all_lines()[0]
+#if True:
+ #   y_change = songs_not_on_screen * song_height
+  #  scroll_steps = int(math.ceil(y_change / WHEEL_Y_CHANGE)) # ceil means scrolling always overshoot
+ #   lines[0].highlight(3)
+ #   upper_bound = lines[0].getY()
+ #   wheel(Env.getMouseLocation(), Button.WHEEL_DOWN, scroll_steps)
+  #  lines = find_all_lines()
+ #   # assumption for line below: WHEEL_Y_CHANGE < 2*song_height
+   # print(songs_on_screen, top_song_cutoff, songs_not_on_screen, y_change)
+   # line_above_first_song = lines[0] if lines[0].getY() >= upper_bound else lines[1]
+#else:
+ #   line_above_first_song = lines[-(NUM_SONGS+1)]
+#line_above_first_song.highlight(3)

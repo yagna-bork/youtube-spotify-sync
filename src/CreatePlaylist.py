@@ -297,10 +297,8 @@ class CreatePlaylist:
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
-                spotify_id, name_created_with = (
-                    self.storage.get_spotify_playlist_id(yt_playlist_id),
-                    self.storage.get_spotify_playlist_name(yt_playlist_id)
-                )
+                spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id),
+                name_created_with = self.storage.get_spotify_playlist_name(yt_playlist_id)
             else:
                 last_synced = None
                 playlist_name = self.get_playlist_name(yt_playlist_id)
@@ -337,3 +335,10 @@ if __name__ == '__main__':
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
     cp = CreatePlaylist(verbose=verbose_arg)
     cp.sync_playlists()
+
+    # instructions = [("t®avis scott", 11)]
+    # os.system(
+    #     "java -jar ~/sikulix/sikulixide-2.0.4.jar -r "
+    #     "~/programming/automation/ytToSpotify/src/local_files_automation.sikuli/ -- "
+    #     f'"{instructions}"'
+    # )
