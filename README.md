@@ -16,8 +16,8 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 * Use youtube thumbnail as cover art in id3 tag
 * Implement as Cron job, UI dashboard should configure how often synced, when is next sync etc...
 * Refactoring 
-  * Refactor for readability
-  * Improve runtime efficency of CreatePlaylist.add_songs_to_spotify_playlist list deletion
+  * Stop using youtube title parser and regex description/look into youtube dl fix
+  * Prevent "WARNING: Requested formats are incompatible for merge and will be merged into mkv." and following slow mp4 download
 * web interface prompt to create input.csv?
 * slow down any song from spotify
 * upload slowed reverb generated songs directly to youtube -> increase the circulation of slowed songs

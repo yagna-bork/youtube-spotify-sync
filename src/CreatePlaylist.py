@@ -77,6 +77,7 @@ class CreatePlaylist:
                 published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
                 # only add song if its been added to playlist after last sync
+                # TODO ignore unavailable vidoes
                 if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
                     if not download:
                         spotify_id = self.get_spotify_id(video_title)
@@ -148,7 +149,6 @@ class CreatePlaylist:
                     )
 
     def save_instructions_to_file(self, instructions):
-        # TODO send email
         path = f"{self.instructions_dir_path}/{str(datetime.now())}-instructions.txt"
         path = re.sub(" +", "-", path)
         with open(path, "w+") as file:
@@ -206,7 +206,7 @@ class CreatePlaylist:
         return chapters
 
     # TODO add video_title as metadata for individual songs
-    def split_video_into_chapters(self, full_video_file: str, chapters: t.List[YoutubeChapter]) -> t.List[str]:
+    def split_video_into_chapters_and_save(self, full_video_file: str, chapters: t.List[YoutubeChapter]) -> t.List[str]:
         song_files = []
         for i, chapter in enumerate(chapters):
             output_file = f"{chapter.title}.mp3"
@@ -242,7 +242,19 @@ class CreatePlaylist:
         if not self.verbose:
             print(instruction)
 
-    def _handle_songs_to_download(self, songs, download_instructions, name_created_with) -> None:
+    @classmethod
+    def add_songs_to_playlists_sikulix(cls, instructions):
+        home = os.environ["HOME"]
+        call_args = [
+            "java", "-jar", f"{home}/sikulix/sikulixide-2.0.4.jar", "-r",
+            f"{home}/programming/automation/ytToSpotify/src/local_files_automation.sikuli/", "--"
+        ]
+        for playlist, count in instructions:
+            call_args.append("-e")
+            call_args.append(f"{playlist},{count}")
+        subprocess.run(call_args)
+
+    def _handle_songs_to_download(self, songs, name_created_with, sikulix_instructions) -> None:
         downloader = youtube_dl.YoutubeDL(
             {
                 "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",
@@ -257,10 +269,12 @@ class CreatePlaylist:
                 "no_warnings": not self.verbose,
             }
         )
-        for song in songs:
+        for idx, song in enumerate(songs):
             yt_url, chapters = song["yt_url"], song["chapters"]
+
+            # get most recently created file's name
             # TODO speed up: stop downloading mp4 -> mp3 in every case
-            # (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
+            # TODO (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
             downloader.download([yt_url])
             files = glob.glob('../dl_dump/*.mp3')
             vid_file = max(files, key=os.path.getctime).split("/")[-1]  # get most recently created file's name
@@ -272,9 +286,6 @@ class CreatePlaylist:
                     print(f"Skipping {vid_title}. Couldn't create the playlist required")
                     continue
                 _, playlist = result
-                self.handle_instruction(
-                    f"Turn on download option for the '{playlist}' playlist", download_instructions
-                )
                 # noinspection PyTypeChecker
                 downloaded_songs = self.split_video_into_chapters(vid_file, chapters)
                 os.remove(f"{self.downloads_dir_path}/{vid_file}")
@@ -282,17 +293,17 @@ class CreatePlaylist:
                 playlist, downloaded_songs = name_created_with, [vid_file]
 
             for track_number, song_file in enumerate(downloaded_songs):
-                song_name, song_path = re.sub(".mp3", "", song_file), f"{self.downloads_dir_path}/{song_file}"
-                self.add_id3_tag(song_path, song_name, playlist, track_number)
+                song_name = re.sub(".mp3", "", song_file)
+                song_path = f"{self.downloads_dir_path}/{song_file}"
+                self.add_id3_tag(song_path, song_name, playlist, track_number + 1)
                 os.rename(
-                    f"{self.downloads_dir_path}/{song_file}", f"{self.spotify_local_files_path}/{song_file}"
+                    song_path, f"{self.spotify_local_files_path}/{song_file}"
                 )
-                self.handle_instruction(
-                    f"Move {song_name} -> '{playlist}' spotify playlist", download_instructions
-                )
+                sikulix_instructions.append((playlist, len(downloaded_songs)))
+                print(f"{playlist}: {idx}/{len(songs)} songs synced succesfully")
 
     def sync_playlists(self):
-        download_instructions = []
+        sikulix_instructions = []
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
             if self.storage.has_playlist_been_synced(yt_playlist_id):
@@ -307,15 +318,10 @@ class CreatePlaylist:
                     print(f"Skipping {playlist_name}. Couldn't create the playlist on spotify")
                     continue
                 spotify_id, name_created_with = result
-                if download:
-                    self.handle_instruction(
-                        f"Turn on download option for the '{name_created_with}' playlist", download_instructions
-                    )
 
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
-            # todo leaks, teeway (liked songs), all playlists
             if download:
-                self._handle_songs_to_download(songs, download_instructions, name_created_with)
+                self._handle_songs_to_download(songs, name_created_with, sikulix_instructions)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
@@ -325,9 +331,12 @@ class CreatePlaylist:
             else:
                 self.storage.store_new_entry(yt_playlist_id, spotify_id, name_created_with)
 
-        if download_instructions:
-            file = self.save_instructions_to_file(download_instructions)
-            print(f"You can find all instructions for your local files in {file}")
+        if sikulix_instructions:
+            proceed = input(
+                "Would you like to automatially add the downloaded songs to their respective spotify playlists? (Y/n): "
+            )
+            if proceed.lower() == "y":
+                self.add_songs_to_playlists_sikulix(sikulix_instructions)
 
 
 # TODO implement as cron job
@@ -335,10 +344,3 @@ if __name__ == '__main__':
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
     cp = CreatePlaylist(verbose=verbose_arg)
     cp.sync_playlists()
-
-    # instructions = [("t®avis scott", 11)]
-    # os.system(
-    #     "java -jar ~/sikulix/sikulixide-2.0.4.jar -r "
-    #     "~/programming/automation/ytToSpotify/src/local_files_automation.sikuli/ -- "
-    #     f'"{instructions}"'
-    # )
