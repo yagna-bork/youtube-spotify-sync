@@ -2,7 +2,6 @@
 Sync youtube playlists onto spotify. Download songs which have been marked as youtube exclusive to allow for spotify play.
 
 ## Instructions
-1. Use youtube thumbnails for song thumbnails, id3 perhaps?
 1. Create input.csv format: [Youtube playlist id,Songs need to be downloaded (true/false)]
 1. Create empty storage.csv file
 1. Follow link for spotify authentication
