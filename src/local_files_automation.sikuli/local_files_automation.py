@@ -1,7 +1,6 @@
 import ast
 
 
-# TODO handle FindFail gracefully in calling program
 # TODO Cancel on ctrl+c press
 # TODO display AR-like text of current thing its doing
 WHEEL_STEPS = 10
@@ -11,10 +10,11 @@ MAX_WAIT_DURATION = 0.5
 # parse string "[('example', 1), ('example2', 2)]" into ["example", "example2", "example2"]
 def parse_instrutions_from_args():
     args = sys.argv[1:]
-    condensed_instructions = ast.literal_eval(args[0])
     instructions = []
-    for playlist_name, num_songs in condensed_instructions:
-        instructions.extend([playlist_name] * num_songs)
+    for i in range(0, len(args), 2):
+        if args[i] in ["-e", "--entry"]:
+            playlist, count = args[i+1].split(",")
+            instructions.extend([playlist] * int(count))
     return instructions
 
 
@@ -34,7 +34,7 @@ def find_all_lines():
 def click_if_found(match, duration=MAX_WAIT_DURATION):
     try:
         wait(match, duration)
-    except:
+    except FindFailed:
         return False
     else:
         click(match)
@@ -46,18 +46,33 @@ def wait_and_do(duration, func):
     return func() 
 
 
-def run():
-    instructions = parse_instrutions_from_args()
-    num_songs = len(instructions)
-    apply_setting()
+def find_scroll_anchor_on_local_files():
     openApp("Spotify")
 
     # open local files
     doubleClick(wait("radio_icon.png", 1))
-    wait_and_do(0.7, lambda: type(Key.DOWN*6))
+    click("radio_icon.png")  # when spotify first starts, key down scrolls on content rather than menu for some reason
+    wait_and_do(0.5, lambda: type(Key.DOWN * 6))
 
-    # scroll to bottom of page
-    scroll_anchor = exists("title_text.png", 1)
+    return wait("title_text.png", 1.5)
+
+
+def retry_n_times(func, n, exit_code, *args):
+    for retries in range(1, n + 1):
+        try:
+            return func(*args)
+        except FindFailed:
+            pass
+    exit(exit_code)
+
+
+def run():
+    instructions = parse_instrutions_from_args()
+    num_songs = len(instructions)
+    apply_setting()
+
+    # scroll to bottom of local files
+    scroll_anchor = retry_n_times(find_scroll_anchor_on_local_files, 3, 131)
     x, y = scroll_anchor.getBottomLeft().getX(), scroll_anchor.getBottomLeft().getY()
     width = 200
     region_around_anchor = Region(x, y, width, width)
@@ -69,7 +84,7 @@ def run():
         if region_around_anchor.has(old_region_around_anchor, 0):
             break
         if i == max_scrolling - 1:
-            exit(130)  # exited without getting to bottom of local files for some reason
+            exit(131)  # exited without getting to bottom of local files for some reason
 
     # click in empty region right of all lines to clear selection
     bottom_line = find_all_lines()[-1]
@@ -83,10 +98,12 @@ def run():
     mouseMove(bottom_line.getTopRight().offset(10, 0))
     type(Key.UP*(num_songs-1))  # highlights to top song to add
 
-    # TODO fail gracefully here, indicate which songs were succesfully added
+    # TODO retry each step, else log failed attempt and try next song
     for target_playlist in instructions:
-        options_btn = wait("more_dots.png", MAX_WAIT_DURATION); click(options_btn)
-        add_to_playlist_btn = wait("add_to_playlist_img.png", MAX_WAIT_DURATION); click(add_to_playlist_btn)
+        options_btn = wait("more_dots.png", MAX_WAIT_DURATION)
+        click(options_btn)
+        add_to_playlist_btn = wait("add_to_playlist_img.png", MAX_WAIT_DURATION)
+        click(add_to_playlist_btn)
         mouseMove(-150, 5)
         wait_and_do(0.1, lambda: paste(unicode(target_playlist, "utf-8")))
         curr_x, target_y = Env.getMouseLocation().getX(), add_to_playlist_btn.getTarget().getY()
@@ -97,7 +114,7 @@ def run():
 
         # clear any selection because mouse is hovering over previous song
         end_of_bottom_line = find_all_lines()[-1].getTopRight()
-        target_x, curr_y = end_of_bottom_line.getX()+25, Env.getMouseLocation().getY()
+        target_x, curr_y = end_of_bottom_line.getX() + 25, Env.getMouseLocation().getY()
         mouseMove(Location(target_x, curr_y))
 
         type(Key.DOWN)
