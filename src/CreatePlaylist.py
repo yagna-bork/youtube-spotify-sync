@@ -8,6 +8,9 @@ import re
 import sys
 import glob
 import google_auth_oauthlib.flow
+import google.oauth2.credentials
+import google.auth.transport.requests
+import google.auth.exceptions
 import googleapiclient.discovery
 import googleapiclient.errors
 from youtube_title_parse import get_artist_title
@@ -16,7 +19,55 @@ import secrets
 import eyed3
 from storage_manager import StorageManager
 from input_manger import get_inputs
-from datetime_manager import gmt_to_local_timezone, parse_youtube_datetime
+from datetime_manager import parse_youtube_datetime
+import keyring
+
+
+class APIHelper:
+    def __init__(self) -> None:
+        self._keyring_service_id = "yt2spotifysync"
+
+    def store_kvp(self, key: str, value: str) -> None:
+        keyring.set_password(self._keyring_service_id, key, value)
+
+    def retrieve_kvp(self, key: str) -> str:
+        return keyring.get_password(self._keyring_service_id, key)
+
+    def _do_google_auth_flow(self, scopes: t.List[str]) -> google.oauth2.credentials.Credentials:
+        secrets_file = "client_secret.json"
+        flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(secrets_file, scopes)
+        return flow.run_console()
+
+    def _build_credentials(self, credentials_json: str) -> google.oauth2.credentials.Credentials:
+        credentials_dict = json.loads(credentials_json)
+        return google.oauth2.credentials.Credentials.from_authorized_user_info(credentials_dict)
+
+    def _get_google_apis_credentials(self, scopes: t.List[str]) -> google.oauth2.credentials.Credentials:
+        credentials_json = self.retrieve_kvp("credentials_json")
+        if credentials_json:
+            credentials = self._build_credentials(credentials_json)
+            if credentials.valid:
+                return credentials
+            else:
+                try:
+                    request = google.auth.transport.requests.Request()
+                    credentials.refresh(request)
+                except google.auth.exceptions.RefreshError:
+                    print("Something went wrong with refreshing your google access token. Let's make a new one.")
+                else:
+                    self.store_kvp("credentials_json", credentials.to_json())
+                    return credentials
+
+        credentials = self._do_google_auth_flow(scopes)
+        credentials_json = credentials.to_json()
+        self.store_kvp("credentials_json", credentials_json)
+        return credentials
+
+    @property
+    def youtube_api(self):
+        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
+        credentials = self._get_google_apis_credentials(scopes)
+        return googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
 
 
 class YoutubeChapter(t.NamedTuple):
@@ -39,8 +90,7 @@ class YoutubeChapter(t.NamedTuple):
 class CreatePlaylist:
     def __init__(self, verbose=True, fetch_token=False):
         self.user_id = secrets.user_id
-        self.token = self.get_spotify_token() if fetch_token else secrets.spotify_token
-        self.youtube_client = self.get_youtube_api()
+        self.api_helper = APIHelper()
         self.liked_songs_info = {}
         self.storage = StorageManager()
         self.spotify_local_files_path = "{}/Music/spotify".format(os.getenv("HOME"))
@@ -61,30 +111,6 @@ class CreatePlaylist:
         spotify_token = input("Enter the spotify token: ")
         return spotify_token
 
-    @staticmethod
-    def get_youtube_api():
-        """ Log Into Youtube, Copied from Youtube Data API """
-        # Disable OAuthlib's HTTPS verification when running locally.
-        # *DO NOT* leave this option enabled in production.
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
-        api_service_name = "youtube"
-        api_version = "v3"
-        client_secrets_file = "client_secret.json"
-
-        # Get credentials and create an API client
-        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
-        flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
-            client_secrets_file, scopes)
-        credentials = flow.run_console()
-
-        # from the Youtube DATA API
-        youtube_client = googleapiclient.discovery.build(
-            api_service_name, api_version, credentials=credentials)
-
-        # TODO client_secret set to installed might be an issue
-        return youtube_client
-
     # returns song name, artist and spotify id
     # TODO Use new version of youtube-dl that implements this fix
     def get_spotify_id(self, video_title):
@@ -103,14 +129,17 @@ class CreatePlaylist:
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
     def get_songs_information(self, playlist_id, download, timestamp=None):
         songs = []
-        request = self.youtube_client.playlistItems().list(
-            part="snippet,contentDetails",
-            maxResults=50,
-            playlistId=playlist_id
-        )
+        next_page_token = None
         # keep requesting songs from playlist while some are still remaining
         while True:
-            response = request.execute()
+            with self.api_helper.youtube_api as youtube_api:
+                request = youtube_api.playlistItems().list(
+                    part="snippet,contentDetails",
+                    maxResults=50,
+                    playlistId=playlist_id,
+                    pageToken=next_page_token,
+                )
+                response = request.execute()
             for video in response['items']:
                 video_title = video["snippet"]["title"]
                 published_at_str = video["snippet"]["publishedAt"]
@@ -129,23 +158,18 @@ class CreatePlaylist:
                         songs.append(song_info)
             # refine request so it fetches next page of results or prevent anymore requests
             if 'nextPageToken' in response:
-                request = self.youtube_client.playlistItems().list(
-                    part="snippet,contentDetails",
-                    maxResults=50,
-                    playlistId=playlist_id,
-                    pageToken=response['nextPageToken']
-                )
+                next_page_token = response['nextPageToken']
             else:
                 break
         return songs
 
     def get_playlist_name(self, playlist_id):
-        request = self.youtube_client.playlists().list(
-            part="snippet",
-            id=playlist_id
-        )
-
-        response = request.execute()
+        with self.api_helper.youtube_api as youtube_api:
+            request = self.youtube_client.playlists().list(
+                part="snippet",
+                id=playlist_id
+            )
+            response = request.execute()
         return response['items'][0]['snippet']['title']
 
     # Create corresponding playlist on Spotify
