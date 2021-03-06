@@ -21,6 +21,7 @@ from storage_manager import StorageManager
 from input_manger import get_inputs
 from datetime_manager import parse_youtube_datetime
 import keyring
+import pkce
 
 
 class APIHelper:
@@ -68,6 +69,41 @@ class APIHelper:
         scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
         credentials = self._get_google_apis_credentials(scopes)
         return googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
+
+    def _get_spotify_auth_url(self, scopes: t.List[str]) -> t.Tuple[str, str, str]:
+        code_verifier, code_challenge = pkce.generate_pkce_pair()
+        with open("spotify_auth.json", "r") as auth_data_file:
+            auth_data = json.load(auth_data_file)
+        url = auth_data["url"]
+        state = secrets.token_urlsafe(256)
+        query_params_dict = {
+            "client_id": auth_data["client_id"],
+            "reponse_type": "code",
+            "redirect_url": "localhost:8080",
+            "code_challenge_method": "S256",
+            "code_challenge": code_challenge,
+            "state": state,
+            "scopes": scopes,
+        }
+        query_params = ",".join([f"{name}={val}" for name, val in query_params_dict.items()])
+        return f"{url}?{query_params}", code_verifier, state
+
+    def _collect_redirect(self) -> t.Dict[str, str]:
+        return
+
+    def _do_spotify_auth_pkce_flow(self, scopes: t.List[str]):
+        url, code_verifier, state = self._get_spotify_auth_url(scopes)
+        print("Please go to this url to allow this app to create and manage your playlists: " + url)
+        response = self._collect_redirect()
+        if response.get("error"):
+            return
+        auth_code, resp_state = response.values()
+        if state != resp_state:
+            return
+
+    @property
+    def spotify_api(self):
+        pass
 
 
 class YoutubeChapter(t.NamedTuple):
@@ -165,7 +201,7 @@ class CreatePlaylist:
 
     def get_playlist_name(self, playlist_id):
         with self.api_helper.youtube_api as youtube_api:
-            request = self.youtube_client.playlists().list(
+            request = youtube_api.playlists().list(
                 part="snippet",
                 id=playlist_id
             )
@@ -351,8 +387,7 @@ class CreatePlaylist:
         if not self.verbose:
             print(instruction)
 
-    def sync_playlists(self):
-        download_instructions = []
+    def _handle_songs_to_download(self, songs, download_instructions, name_created_with) -> None:
         downloader = youtube_dl.YoutubeDL(
             {
                 "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",
@@ -367,6 +402,38 @@ class CreatePlaylist:
                 "no_warnings": not self.verbose,
             }
         )
+        for song in songs:
+            yt_url, chapters = song["yt_url"], song["chapters"]
+            # TODO speed up: stop downloading mp4 -> mp3 in every case
+            # (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
+            downloader.download([yt_url])
+            files = glob.glob('../dl_dump/*.mp3')
+            vid_file = max(files, key=os.path.getctime).split("/")[-1]  # get most recently created file's name
+            vid_title = vid_file.split(".")[0]
+
+            if chapters:
+                _, playlist = self.create_playlist(vid_title)
+                self.handle_instruction(
+                    f"Turn on download option for the '{playlist}' playlist", download_instructions
+                )
+                # noinspection PyTypeChecker
+                downloaded_songs = self.split_video_into_chapters(vid_file, chapters)
+                os.remove(f"{self.downloads_dir_path}/{vid_file}")
+            else:
+                playlist, downloaded_songs = name_created_with, [vid_file]
+
+            for track_number, song_file in enumerate(downloaded_songs):
+                song_name, song_path = re.sub(".mp3", "", song_file), f"{self.downloads_dir_path}/{song_file}"
+                self.add_id3_tag(song_path, song_name, playlist, track_number)
+                os.rename(
+                    f"{self.downloads_dir_path}/{song_file}", f"{self.spotify_local_files_path}/{song_file}"
+                )
+                self.handle_instruction(
+                    f"Move {song_name} -> '{playlist}' spotify playlist", download_instructions
+                )
+
+    def sync_playlists(self):
+        download_instructions = []
         for yt_playlist_id, download in get_inputs().items():
             print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
             if self.storage.has_playlist_been_synced(yt_playlist_id):
@@ -387,35 +454,7 @@ class CreatePlaylist:
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             # todo leaks, teeway (liked songs), all playlists
             if download:
-                for song in songs:
-                    yt_url, chapters = song["yt_url"], song["chapters"]
-                    # TODO speed up: stop downloading mp4 -> mp3 in every case
-                    # (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
-                    downloader.download([yt_url])
-                    files = glob.glob('../dl_dump/*.mp3')
-                    vid_file = max(files, key=os.path.getctime).split("/")[-1]  # get most recently created file's name
-                    vid_title = vid_file.split(".")[0]
-
-                    if chapters:
-                        _, playlist = self.create_playlist(vid_title)
-                        self.handle_instruction(
-                            f"Turn on download option for the '{playlist}' playlist", download_instructions
-                        )
-                        # noinspection PyTypeChecker
-                        downloaded_songs = self.split_video_into_chapters(vid_file, chapters)
-                        os.remove(f"{self.downloads_dir_path}/{vid_file}")
-                    else:
-                        playlist, downloaded_songs = name_created_with, [vid_file]
-
-                    for track_number, song_file in enumerate(downloaded_songs):
-                        song_name, song_path = re.sub(".mp3", "", song_file), f"{self.downloads_dir_path}/{song_file}"
-                        self.add_id3_tag(song_path, song_name, playlist, track_number)
-                        os.rename(
-                            f"{self.downloads_dir_path}/{song_file}", f"{self.spotify_local_files_path}/{song_file}"
-                        )
-                        self.handle_instruction(
-                            f"Move {song_name} -> '{playlist}' spotify playlist", download_instructions
-                        )
+                self._handle_songs_to_download(songs)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
@@ -435,4 +474,5 @@ if __name__ == '__main__':
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
     fetch_token_arg = any(arg in ["--fetch-token", "-f"] for arg in sys.argv)
     cp = CreatePlaylist(verbose=verbose_arg, fetch_token=fetch_token_arg)
-    cp.sync_playlists()
+    # cp.sync_playlists()
+    print(cp.get_playlist_name("PLucKeiEo64s-ldaDEIOutsulqUIsOOpX4"))
