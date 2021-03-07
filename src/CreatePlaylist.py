@@ -7,103 +7,14 @@ import typing as t
 import re
 import sys
 import glob
-import google_auth_oauthlib.flow
-import google.oauth2.credentials
-import google.auth.transport.requests
-import google.auth.exceptions
-import googleapiclient.discovery
-import googleapiclient.errors
 from youtube_title_parse import get_artist_title
 import subprocess
-import secrets
 import eyed3
 from storage_manager import StorageManager
 from input_manger import get_inputs
 from datetime_manager import parse_youtube_datetime
-import keyring
-import pkce
-
-
-class APIHelper:
-    def __init__(self) -> None:
-        self._keyring_service_id = "yt2spotifysync"
-
-    def store_kvp(self, key: str, value: str) -> None:
-        keyring.set_password(self._keyring_service_id, key, value)
-
-    def retrieve_kvp(self, key: str) -> str:
-        return keyring.get_password(self._keyring_service_id, key)
-
-    def _do_google_auth_flow(self, scopes: t.List[str]) -> google.oauth2.credentials.Credentials:
-        secrets_file = "client_secret.json"
-        flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(secrets_file, scopes)
-        return flow.run_console()
-
-    def _build_credentials(self, credentials_json: str) -> google.oauth2.credentials.Credentials:
-        credentials_dict = json.loads(credentials_json)
-        return google.oauth2.credentials.Credentials.from_authorized_user_info(credentials_dict)
-
-    def _get_google_apis_credentials(self, scopes: t.List[str]) -> google.oauth2.credentials.Credentials:
-        credentials_json = self.retrieve_kvp("credentials_json")
-        if credentials_json:
-            credentials = self._build_credentials(credentials_json)
-            if credentials.valid:
-                return credentials
-            else:
-                try:
-                    request = google.auth.transport.requests.Request()
-                    credentials.refresh(request)
-                except google.auth.exceptions.RefreshError:
-                    print("Something went wrong with refreshing your google access token. Let's make a new one.")
-                else:
-                    self.store_kvp("credentials_json", credentials.to_json())
-                    return credentials
-
-        credentials = self._do_google_auth_flow(scopes)
-        credentials_json = credentials.to_json()
-        self.store_kvp("credentials_json", credentials_json)
-        return credentials
-
-    @property
-    def youtube_api(self):
-        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
-        credentials = self._get_google_apis_credentials(scopes)
-        return googleapiclient.discovery.build("youtube", "v3", credentials=credentials)
-
-    def _get_spotify_auth_url(self, scopes: t.List[str]) -> t.Tuple[str, str, str]:
-        code_verifier, code_challenge = pkce.generate_pkce_pair()
-        with open("spotify_auth.json", "r") as auth_data_file:
-            auth_data = json.load(auth_data_file)
-        url = auth_data["url"]
-        state = secrets.token_urlsafe(256)
-        query_params_dict = {
-            "client_id": auth_data["client_id"],
-            "reponse_type": "code",
-            "redirect_url": "localhost:8080",
-            "code_challenge_method": "S256",
-            "code_challenge": code_challenge,
-            "state": state,
-            "scopes": scopes,
-        }
-        query_params = ",".join([f"{name}={val}" for name, val in query_params_dict.items()])
-        return f"{url}?{query_params}", code_verifier, state
-
-    def _collect_redirect(self) -> t.Dict[str, str]:
-        return
-
-    def _do_spotify_auth_pkce_flow(self, scopes: t.List[str]):
-        url, code_verifier, state = self._get_spotify_auth_url(scopes)
-        print("Please go to this url to allow this app to create and manage your playlists: " + url)
-        response = self._collect_redirect()
-        if response.get("error"):
-            return
-        auth_code, resp_state = response.values()
-        if state != resp_state:
-            return
-
-    @property
-    def spotify_api(self):
-        pass
+from spotipy.client import SpotifyException
+from api_helpers import *
 
 
 class YoutubeChapter(t.NamedTuple):
@@ -124,11 +35,10 @@ class YoutubeChapter(t.NamedTuple):
 
 
 class CreatePlaylist:
-    def __init__(self, verbose=True, fetch_token=False):
-        self.user_id = secrets.user_id
-        self.api_helper = APIHelper()
-        self.liked_songs_info = {}
+    def __init__(self, verbose=True):
+        # TODO smart last_synced, check if playlist_id exists on spotify, if not, reset and sync every song again
         self.storage = StorageManager()
+        # TODO these three, bottom two with default values
         self.spotify_local_files_path = "{}/Music/spotify".format(os.getenv("HOME"))
         self.downloads_dir_path = "../dl_dump"
         self.instructions_dir_path = "../instruction_logs"
@@ -147,28 +57,13 @@ class CreatePlaylist:
         spotify_token = input("Enter the spotify token: ")
         return spotify_token
 
-    # returns song name, artist and spotify id
-    # TODO Use new version of youtube-dl that implements this fix
-    def get_spotify_id(self, video_title):
-        try:
-            artist, song_name = get_artist_title(video_title)
-            spotify_uri = self.get_song_spotify_uri(song_name, artist)
-
-            if spotify_uri != -1:
-                return spotify_uri
-            else:
-                return None
-        except Exception:  # TODO fix this pylint broad exception
-            # print("Could not find song name and artist from {0}".format(video_title))
-            return None
-
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
     def get_songs_information(self, playlist_id, download, timestamp=None):
         songs = []
         next_page_token = None
         # keep requesting songs from playlist while some are still remaining
         while True:
-            with self.api_helper.youtube_api as youtube_api:
+            with get_youtube_api() as youtube_api:
                 request = youtube_api.playlistItems().list(
                     part="snippet,contentDetails",
                     maxResults=50,
@@ -185,7 +80,7 @@ class CreatePlaylist:
                 if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
                     if not download:
                         spotify_id = self.get_spotify_id(video_title)
-                        if spotify_id is not None:
+                        if spotify_id:
                             song = {"spotify_id": spotify_id, "yt_url": youtube_url}
                             songs.append(song)
                     else:
@@ -200,7 +95,7 @@ class CreatePlaylist:
         return songs
 
     def get_playlist_name(self, playlist_id):
-        with self.api_helper.youtube_api as youtube_api:
+        with get_youtube_api() as youtube_api:
             request = youtube_api.playlists().list(
                 part="snippet",
                 id=playlist_id
@@ -210,28 +105,15 @@ class CreatePlaylist:
 
     # Create corresponding playlist on Spotify
     def create_playlist(self, name, public=True):
-        request_body = json.dumps({
-            "name": name,
-            "description": "Spotify synced version of the {} playlist from your YouTube".format(name),
-            "public": public
-        })
-        endpoint = "https://api.spotify.com/v1/users/{}/playlists".format(self.user_id)
-
-        response = requests.post(
-            endpoint,
-            data=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": "Bearer {}".format(self.token)
-            }
-        )
-        response_json = response.json()
-
-        if 'error' in response_json:
-            print("Response after sending request to create playlist: \n{}".format(response_json))
-            return -1  # TODO replace all -1 with proper error handling
-        else:
-            return response_json["id"], response_json["name"]
+        description = "Spotify synced version of the {} playlist from your YouTube".format(name)
+        with get_spotify_api() as sp:
+            user_id = sp.current_user()['id']
+            try:
+                result = sp.user_playlist_create(user_id, name=name, public=public, description=description)
+                return result["id"], result["name"]
+            except SpotifyException as error:
+                print(f"Got an error while trying to create playlist: {name}.\n{error}")
+                return None
 
     @staticmethod
     def parse_query(*args: str) -> str:
@@ -243,54 +125,37 @@ class CreatePlaylist:
             query += formatted_arg
         return query
 
-    def get_song_spotify_uri(self, song_name, artist):
-        q = self.parse_query(song_name, artist)
-        spotify_type = "track"
-        market = "GB"
-        limit = 1  # TODO: Might cause issue
-
-        endpoint = "https://api.spotify.com/v1/search?q={0}&type={1}&market={2}&limit={3}".format(
-            q, spotify_type, market, limit)
-
-        response = requests.get(
-            endpoint,
-            headers={
-                "Authorization": "Bearer {}".format(self.token)
-            }
-        )
-
-        response_json = response.json()
-        returned_songs = response_json['tracks']['items']
+    # TODO Use new version of youtube-dl that implements this fix
+    def get_spotify_id(self, video_title):
+        artist, song_name = get_artist_title(video_title)
+        query = self.parse_query(song_name, artist)
+        spotify_id = None
+        with get_spotify_api() as sp:
+            try:
+                result = sp.search(query, limit=1, type="track", market="GB")
+                items = result['tracks']['items']
+                spotify_id = items[0]['uri'] if items else None
+            except SpotifyException as error:
+                print(
+                    "Got error while trying to get spotify_uri for {0}. song_name, artist: {1}, {2}.\n{3}" .format(
+                        video_title, artist, song_name, error
+                    )
+                )
 
         # TODO suggest alternative for failed songs command line feature
-        if len(returned_songs) > 0:
-            # uri of first song from query results
-            return returned_songs[0]['uri']
-        else:
-            return -1
+        return spotify_id
 
     def add_songs_to_spotify_playlist(self, song_uris, spotify_playlist_id):
-        while len(song_uris) > 0:
-            batch_size = min(100, len(song_uris))  # N <= 100
-
-            # send first N songs to spotify
-            request_data = json.dumps(song_uris[:batch_size])
-
-            # remove first N elements from song_uris
-            song_uris = song_uris[batch_size:]
-
-            query = "https://api.spotify.com/v1/playlists/{}/tracks".format(spotify_playlist_id)
-
-            response = requests.post(
-                query,
-                data=request_data,
-                headers={
-                    "Authorization": "Bearer {}".format(self.token),
-                    "Content-Type": "application/json"
-                }
-            )
-
-            print(response.json())
+        with get_spotify_api() as sp:
+            for i in range(0, len(song_uris), 100):
+                uris_batch = song_uris[i: i+100]
+                try:
+                    sp.playlist_add_items(spotify_playlist_id, uris_batch)
+                except SpotifyException as error:
+                    print(
+                        f"Got an error while trying to add following song uris to {spotify_playlist_id}:\n{uris_batch}"
+                        f"\n{error}"
+                    )
 
     def save_instructions_to_file(self, instructions):
         # TODO send email
@@ -412,7 +277,11 @@ class CreatePlaylist:
             vid_title = vid_file.split(".")[0]
 
             if chapters:
-                _, playlist = self.create_playlist(vid_title)
+                result = self.create_playlist(vid_title)
+                if not result:
+                    print(f"Skipping {vid_title}. Couldn't create the playlist required")
+                    continue
+                _, playlist = result
                 self.handle_instruction(
                     f"Turn on download option for the '{playlist}' playlist", download_instructions
                 )
@@ -445,7 +314,11 @@ class CreatePlaylist:
             else:
                 last_synced = None
                 playlist_name = self.get_playlist_name(yt_playlist_id)
-                spotify_id, name_created_with = self.create_playlist(playlist_name)
+                result = self.create_playlist(playlist_name)
+                if not result:
+                    print(f"Skipping {playlist_name}. Couldn't create the playlist on spotify")
+                    continue
+                spotify_id, name_created_with = result
                 if download:
                     self.handle_instruction(
                         f"Turn on download option for the '{name_created_with}' playlist", download_instructions
@@ -454,7 +327,7 @@ class CreatePlaylist:
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             # todo leaks, teeway (liked songs), all playlists
             if download:
-                self._handle_songs_to_download(songs)
+                self._handle_songs_to_download(songs, download_instructions, name_created_with)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
@@ -472,7 +345,5 @@ class CreatePlaylist:
 # TODO implement as cron job
 if __name__ == '__main__':
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
-    fetch_token_arg = any(arg in ["--fetch-token", "-f"] for arg in sys.argv)
-    cp = CreatePlaylist(verbose=verbose_arg, fetch_token=fetch_token_arg)
-    # cp.sync_playlists()
-    print(cp.get_playlist_name("PLucKeiEo64s-ldaDEIOutsulqUIsOOpX4"))
+    cp = CreatePlaylist(verbose=verbose_arg)
+    cp.sync_playlists()
