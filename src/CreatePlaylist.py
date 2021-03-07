@@ -115,20 +115,10 @@ class CreatePlaylist:
                 print(f"Got an error while trying to create playlist: {name}.\n{error}")
                 return None
 
-    @staticmethod
-    def parse_query(*args: str) -> str:
-        query = ""
-        for arg in args:
-            no_whitespace_ascii_arg = re.sub(r"[^0-9A-Za-z ]| +$|^ +", "", arg)
-            no_space_arg = re.sub(" +", "+", no_whitespace_ascii_arg)
-            formatted_arg = f"{no_space_arg}+" if no_space_arg[:-1] != "+" else no_space_arg
-            query += formatted_arg
-        return query
-
     # TODO Use new version of youtube-dl that implements this fix
     def get_spotify_id(self, video_title):
         artist, song_name = get_artist_title(video_title)
-        query = self.parse_query(song_name, artist)
+        query = "+".join(artist.split() + song_name.split())
         spotify_id = None
         with get_spotify_api() as sp:
             try:
