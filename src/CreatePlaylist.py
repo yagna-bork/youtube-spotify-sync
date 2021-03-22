@@ -1,5 +1,3 @@
-import requests
-import json
 import os
 from datetime import datetime
 import youtube_dl
@@ -34,6 +32,7 @@ class YoutubeChapter(t.NamedTuple):
         return start_seconds
 
 
+# TODO refactor to not be a class
 class CreatePlaylist:
     def __init__(self, verbose=True):
         # TODO smart last_synced, check if playlist_id exists on spotify, if not, reset and sync every song again
@@ -44,6 +43,7 @@ class CreatePlaylist:
         self.instructions_dir_path = "../instruction_logs"
         self.verbose = verbose
 
+    # TODO remove this
     @staticmethod
     def get_spotify_token():
         print("Access this uri for spotify authorization:\n{}".format(secrets.get_uri))
@@ -57,42 +57,51 @@ class CreatePlaylist:
         spotify_token = input("Enter the spotify token: ")
         return spotify_token
 
+    def get_available_videos(
+        self, playlist_items: t.List[t.Dict[str, t.Any]], youtube_api
+    ) -> t.List[t.Dict[str, t.Any]]:
+        id_to_video = {
+            item["contentDetails"]["videoId"]: item for item in playlist_items
+        }
+        playlist_vid_ids = ",".join(id_to_video.keys())
+        available_videos = youtube_api.videos().list(
+            part="id,status", maxResults=50, id=playlist_vid_ids,
+        ).execute().get("items", [])
+        available_video_ids = set([vid["id"] for vid in available_videos])
+
+        return [video for vid_id, video in id_to_video.items() if vid_id in available_video_ids]
+
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
     def get_songs_information(self, playlist_id, download, timestamp=None):
-        songs = []
-        next_page_token = None
-        # keep requesting songs from playlist while some are still remaining
+        songs, next_page_token = [], None
+
         while True:
             with get_youtube_api() as youtube_api:
-                request = youtube_api.playlistItems().list(
-                    part="snippet,contentDetails",
-                    maxResults=50,
-                    playlistId=playlist_id,
-                    pageToken=next_page_token,
-                )
-                response = request.execute()
-            for video in response['items']:
+                response = youtube_api.playlistItems().list(
+                    part="snippet,contentDetails", maxResults=50, playlistId=playlist_id, pageToken=next_page_token,
+                ).execute()
+                videos = self.get_available_videos(response["items"], youtube_api)
+                next_page_token = response.get("nextPageToken")
+
+            for video in videos:
                 video_title = video["snippet"]["title"]
                 published_at_str = video["snippet"]["publishedAt"]
                 published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
                 youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
-                # only add song if its been added to playlist after last sync
-                # TODO ignore unavailable vidoes
-                if timestamp is None or published_at > datetime.utcfromtimestamp(timestamp):
-                    if not download:
-                        spotify_id = self.get_spotify_id(video_title)
-                        if spotify_id:
-                            song = {"spotify_id": spotify_id, "yt_url": youtube_url}
-                            songs.append(song)
-                    else:
-                        chapters = self.parse_chapters_from_description(video["snippet"]["description"])
-                        song_info = {"yt_url": youtube_url, "vid_title": video_title, "chapters": chapters}
-                        songs.append(song_info)
-            # refine request so it fetches next page of results or prevent anymore requests
-            if 'nextPageToken' in response:
-                next_page_token = response['nextPageToken']
-            else:
+
+                if timestamp and published_at < datetime.utcfromtimestamp(timestamp):
+                    continue
+                if not download and (spotify_id := self.get_spotify_id(video_title)):
+                    song = {"spotify_id": spotify_id, "yt_url": youtube_url}
+                    songs.append(song)
+                else:
+                    chapters = self.parse_chapters_from_description(video["snippet"]["description"])
+                    song_info = {"yt_url": youtube_url, "vid_title": video_title, "chapters": chapters}
+                    songs.append(song_info)
+
+            if not next_page_token:
                 break
+
         return songs
 
     def get_playlist_name(self, playlist_id):
@@ -225,6 +234,7 @@ class CreatePlaylist:
             if i + 1 < len(chapters):
                 duration = chapters[i+1].seconds_after_start - chapter.seconds_after_start
                 ffmpeg_args = ffmpeg_args[:3] + ["-t", str(duration)] + ffmpeg_args[3:]
+            # TODO check if this completed succesfully, only then append to song_files
             subprocess.run(ffmpeg_args)
             song_files.append(output_file)
         return song_files
@@ -236,12 +246,6 @@ class CreatePlaylist:
         file.tag.track_number = track_number
         file.tag.save()
 
-    def handle_instruction(self, instruction, instructions_list):
-        instructions_list.append(instruction)
-        # only show instructions during slient mode, otherwise it will get drowned out by youtube_dl output
-        if not self.verbose:
-            print(instruction)
-
     @classmethod
     def add_songs_to_playlists_sikulix(cls, instructions):
         home = os.environ["HOME"]
@@ -250,8 +254,7 @@ class CreatePlaylist:
             f"{home}/programming/automation/ytToSpotify/src/local_files_automation.sikuli/", "--"
         ]
         for playlist, count in instructions:
-            call_args.append("-e")
-            call_args.append(f"{playlist},{count}")
+            call_args.extend(["-e", f"{playlist},{count}"])
         subprocess.run(call_args)
 
     def _handle_songs_to_download(self, songs, name_created_with, sikulix_instructions) -> None:
@@ -276,18 +279,17 @@ class CreatePlaylist:
             # TODO speed up: stop downloading mp4 -> mp3 in every case
             # TODO (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
             downloader.download([yt_url])
-            files = glob.glob('../dl_dump/*.mp3')
+            files = glob.glob("../dl_dump/*.mp3")
             vid_file = max(files, key=os.path.getctime).split("/")[-1]  # get most recently created file's name
-            vid_title = vid_file.split(".")[0]
+            vid_title = vid_file.rpartition(".mp3")[0]
 
             if chapters:
-                result = self.create_playlist(vid_title)
-                if not result:
+                if not (result := self.create_playlist(vid_title)):
                     print(f"Skipping {vid_title}. Couldn't create the playlist required")
                     continue
                 _, playlist = result
                 # noinspection PyTypeChecker
-                downloaded_songs = self.split_video_into_chapters(vid_file, chapters)
+                downloaded_songs = self.split_video_into_chapters_and_save(vid_file, chapters)
                 os.remove(f"{self.downloads_dir_path}/{vid_file}")
             else:
                 playlist, downloaded_songs = name_created_with, [vid_file]
@@ -296,11 +298,10 @@ class CreatePlaylist:
                 song_name = re.sub(".mp3", "", song_file)
                 song_path = f"{self.downloads_dir_path}/{song_file}"
                 self.add_id3_tag(song_path, song_name, playlist, track_number + 1)
-                os.rename(
-                    song_path, f"{self.spotify_local_files_path}/{song_file}"
-                )
+                os.rename(song_path, f"{self.spotify_local_files_path}/{song_file}")
                 sikulix_instructions.append((playlist, len(downloaded_songs)))
-                print(f"{playlist}: {idx}/{len(songs)} songs synced succesfully")
+
+            print(f"{playlist}: {idx + 1}/{len(songs)} songs synced successfully")
 
     def sync_playlists(self):
         sikulix_instructions = []
@@ -313,8 +314,7 @@ class CreatePlaylist:
             else:
                 last_synced = None
                 playlist_name = self.get_playlist_name(yt_playlist_id)
-                result = self.create_playlist(playlist_name)
-                if not result:
+                if not (result := self.create_playlist(playlist_name)):
                     print(f"Skipping {playlist_name}. Couldn't create the playlist on spotify")
                     continue
                 spotify_id, name_created_with = result

@@ -1,13 +1,10 @@
-import ast
-
-
 # TODO Cancel on ctrl+c press
 # TODO display AR-like text of current thing its doing
 WHEEL_STEPS = 10
 MAX_WAIT_DURATION = 0.5
 
 
-# parse string "[('example', 1), ('example2', 2)]" into ["example", "example2", "example2"]
+# parse string "-e example,1 -e example2,2" into ["example", "example2", "example2"]
 def parse_instrutions_from_args():
     args = sys.argv[1:]
     instructions = []
