@@ -4,7 +4,6 @@ import youtube_dl
 import typing as t
 import re
 import sys
-import glob
 from youtube_title_parse import get_artist_title
 import subprocess
 import eyed3
@@ -13,6 +12,10 @@ from input_manger import get_inputs
 from datetime_manager import parse_youtube_datetime
 from spotipy.client import SpotifyException
 from api_helpers import *
+import math
+from threading import Thread
+
+sikuli_instruction = t.Tuple[str, int]
 
 
 class YoutubeChapter(t.NamedTuple):
@@ -32,9 +35,8 @@ class YoutubeChapter(t.NamedTuple):
         return start_seconds
 
 
-# TODO refactor to not be a class
 class CreatePlaylist:
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, num_threads=5):
         # TODO smart last_synced, check if playlist_id exists on spotify, if not, reset and sync every song again
         self.storage = StorageManager()
         # TODO these three, bottom two with default values
@@ -42,20 +44,22 @@ class CreatePlaylist:
         self.downloads_dir_path = "../dl_dump"
         self.instructions_dir_path = "../instruction_logs"
         self.verbose = verbose
-
-    # TODO remove this
-    @staticmethod
-    def get_spotify_token():
-        print("Access this uri for spotify authorization:\n{}".format(secrets.get_uri))
-        code = input("Enter the code you got back: ")
-        curl_cmd = "curl -H 'Authorization: Basic {0}' " \
-                   "-d grant_type=authorization_code " \
-                   "-d code={2} " \
-                   "-d redirect_uri={1} " \
-                   "https://accounts.spotify.com/api/token".format(secrets.base64_id_secret, secrets.redirect_url, code)
-        print("Use this curl command:\n{}".format(curl_cmd))
-        spotify_token = input("Enter the spotify token: ")
-        return spotify_token
+        self.num_threads = num_threads
+        self.download_archive_path = "../download_archive.txt"
+        self.downloader = youtube_dl.YoutubeDL(
+            {
+                "outtmpl": f"{self.downloads_dir_path}/%(id)s.%(ext)s",
+                "geo_bypass": True,
+                "postprocessors":
+                    [{'key': 'FFmpegExtractAudio',
+                      'nopostoverwrites': False,
+                      'preferredcodec': 'mp3',
+                      'preferredquality': '320'}],
+                "noplaylist": True,
+                "quiet": not self.verbose,
+                "no_warnings": not self.verbose,
+            }
+        )
 
     def get_available_videos(
         self, playlist_items: t.List[t.Dict[str, t.Any]], youtube_api
@@ -87,7 +91,8 @@ class CreatePlaylist:
                 video_title = video["snippet"]["title"]
                 published_at_str = video["snippet"]["publishedAt"]
                 published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
-                youtube_url = "https://www.youtube.com/watch?v={}".format(video['contentDetails']['videoId'])
+                youtube_id = video['contentDetails']['videoId']
+                youtube_url = "https://www.youtube.com/watch?v={}".format(youtube_id)
 
                 if timestamp and published_at < datetime.utcfromtimestamp(timestamp):
                     continue
@@ -96,7 +101,9 @@ class CreatePlaylist:
                     songs.append(song)
                 else:
                     chapters = self.parse_chapters_from_description(video["snippet"]["description"])
-                    song_info = {"yt_url": youtube_url, "vid_title": video_title, "chapters": chapters}
+                    song_info = {
+                        "yt_id": youtube_id, "vid_title": video_title, "yt_url": youtube_url, "chapters": chapters
+                    }
                     songs.append(song_info)
 
             if not next_page_token:
@@ -202,9 +209,8 @@ class CreatePlaylist:
         lines = description.split("\n")
         parsing_format_to_use_idx = -1
         for line in lines:
-            parsing_result = self.parse_chapter_information(line, parsing_format_to_use_idx)
-            if parsing_result:
-                youtube_chapter, format_used_idx = parsing_result
+            if result := self.parse_chapter_information(line, parsing_format_to_use_idx):
+                youtube_chapter, format_used_idx = result
                 if len(chapters) == 0:
                     # youtube rules say first timestamp must start at 0:00 for chapters in description to be valid
                     if youtube_chapter.seconds_after_start != 0:
@@ -214,22 +220,14 @@ class CreatePlaylist:
                 chapters.append(youtube_chapter)
         return chapters
 
-    # TODO add video_title as metadata for individual songs
-    def split_video_into_chapters_and_save(self, full_video_file: str, chapters: t.List[YoutubeChapter]) -> t.List[str]:
+    def split_video_into_chapters_and_save(self, file_path: str, chapters: t.List[YoutubeChapter]) -> t.List[str]:
         song_files = []
         for i, chapter in enumerate(chapters):
             output_file = f"{chapter.title}.mp3"
             ffmpeg_args = [
-                "ffmpeg",
-                "-ss",
-                str(chapter.seconds_after_start),
-                "-loglevel",
+                "ffmpeg", "-ss", str(chapter.seconds_after_start), "-loglevel",
                 "info" if self.verbose else "quiet",
-                "-i",
-                f"{self.downloads_dir_path}/{full_video_file}",
-                "-b:a",
-                "320k",
-                f"{self.downloads_dir_path}/{output_file}"
+                "-i", file_path, "-b:a", "320k", f"{self.downloads_dir_path}/{output_file}"
             ]
             if i + 1 < len(chapters):
                 duration = chapters[i+1].seconds_after_start - chapter.seconds_after_start
@@ -257,31 +255,72 @@ class CreatePlaylist:
             call_args.extend(["-e", f"{playlist},{count}"])
         subprocess.run(call_args)
 
-    def _handle_songs_to_download(self, songs, name_created_with, sikulix_instructions) -> None:
-        downloader = youtube_dl.YoutubeDL(
-            {
-                "outtmpl": f"/Users/yaggy/programming/automation/ytToSpotify/dl_dump/%(title)s.%(ext)s",
-                "geo_bypass": True,
-                "postprocessors":
-                    [{'key': 'FFmpegExtractAudio',
-                      'nopostoverwrites': False,
-                      'preferredcodec': 'mp3',
-                      'preferredquality': '320'}],
-                "noplaylist": True,
-                "quiet": not self.verbose,
-                "no_warnings": not self.verbose,
-            }
-        )
-        for idx, song in enumerate(songs):
-            yt_url, chapters = song["yt_url"], song["chapters"]
+    @classmethod
+    def _get_chunked_urls(cls, urls, num_threads):
+        """
+        Returns a list of urls in chunked form so the load on each thread is balanced
 
-            # get most recently created file's name
-            # TODO speed up: stop downloading mp4 -> mp3 in every case
-            # TODO (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
-            downloader.download([yt_url])
-            files = glob.glob("../dl_dump/*.mp3")
-            vid_file = max(files, key=os.path.getctime).split("/")[-1]  # get most recently created file's name
-            vid_title = vid_file.rpartition(".mp3")[0]
+        Example:
+            urls: [1,2,3..35], num_threads: 6
+            returns [[1..6],[7..12],[13..18],[19..24],[25..30],[31..35]]
+
+        Example:
+            urls: [1,2,3], num_threads: 5
+            returns [[1], [2], [3]] -> only 3 threads are needed
+        """
+        def increment_first_n(n: int, lst: t.List[t.Union[int, float]]) -> None:
+            for idx in range(n):
+                lst[idx] += 1
+
+        chunk_size = math.floor(len(urls) / num_threads)
+        allocation = [chunk_size] * num_threads
+        increment_first_n(len(urls) - sum(allocation), allocation)  # ensures sum(allocation) == len(urls)
+
+        chunked_urls, i = [], 0
+        for step in allocation:
+            if step == 0:
+                break
+            chunked_urls.append(urls[i: i + step])
+            i += step
+        return chunked_urls
+
+    def _download_yt_videos_threaded(self, urls: t.List[str], num_threads: int) -> None:
+        started_threads = []
+        chunked_urls = self._get_chunked_urls(urls, num_threads)
+        for urls in chunked_urls:
+            thread = Thread(target=self.downloader.download, kwargs={"url_list": urls})
+            thread.start()
+            started_threads.append(thread)
+
+        for thread in started_threads:
+            thread.join()
+
+    def _handle_songs_to_download(
+        self,
+        songs: t.List[t.Dict[str, t.Any]],
+        name_created_with: str,
+        sikulix_instructions: t.List[sikuli_instruction],
+        num_threads: int = 5,
+    ) -> None:
+        urls = [song["yt_url"] for song in songs]
+        # TODO speed up: stop downloading mp4 -> mp3 in every case
+        # TODO (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
+        self._download_yt_videos_threaded(urls, num_threads)
+
+        for idx, song in enumerate(songs):
+            yt_id, vid_title, chapters = song["yt_id"], song["vid_title"], song["chapters"]
+            expected_download_location = os.path.join(self.downloads_dir_path, yt_id + ".mp3")
+            if not os.path.isfile(expected_download_location):
+                # TODO implement "loose songs" bucket for songs that errored but should be retried
+                print(
+                    f"Failed to download {vid_title}."
+                    f" You will have to do sync it manually until the loose songs feature is implemented"
+                )
+                continue
+
+            file_name = vid_title + ".mp3"
+            file_path = os.path.join(self.downloads_dir_path, file_name)
+            os.rename(expected_download_location, file_path)
 
             if chapters:
                 if not (result := self.create_playlist(vid_title)):
@@ -289,18 +328,19 @@ class CreatePlaylist:
                     continue
                 _, playlist = result
                 # noinspection PyTypeChecker
-                downloaded_songs = self.split_video_into_chapters_and_save(vid_file, chapters)
-                os.remove(f"{self.downloads_dir_path}/{vid_file}")
+                downloaded_songs = self.split_video_into_chapters_and_save(file_path, chapters)
+                os.remove(file_path)
             else:
-                playlist, downloaded_songs = name_created_with, [vid_file]
+                playlist, downloaded_songs = name_created_with, [file_name]
 
-            for track_number, song_file in enumerate(downloaded_songs):
-                song_name = re.sub(".mp3", "", song_file)
-                song_path = f"{self.downloads_dir_path}/{song_file}"
-                self.add_id3_tag(song_path, song_name, playlist, track_number + 1)
-                os.rename(song_path, f"{self.spotify_local_files_path}/{song_file}")
-                sikulix_instructions.append((playlist, len(downloaded_songs)))
+            for i, file_name in enumerate(downloaded_songs):
+                title = file_name.rpartition(".mp3")[0]
+                path = os.path.join(self.downloads_dir_path, file_name)
+                self.add_id3_tag(path, title=title, album=playlist, track_number=i + 1)
+                # TODO make sure same ordering (i.e. track number) shows up in local files
+                os.rename(path, os.path.join(self.spotify_local_files_path, file_name))
 
+            sikulix_instructions.append((playlist, len(downloaded_songs)))
             print(f"{playlist}: {idx + 1}/{len(songs)} songs synced successfully")
 
     def sync_playlists(self):
@@ -321,7 +361,7 @@ class CreatePlaylist:
 
             songs = self.get_songs_information(yt_playlist_id, download, last_synced)
             if download:
-                self._handle_songs_to_download(songs, name_created_with, sikulix_instructions)
+                self._handle_songs_to_download(songs, name_created_with, sikulix_instructions, self.num_threads)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
                 self.add_songs_to_spotify_playlist(song_uris, spotify_id)
@@ -333,7 +373,9 @@ class CreatePlaylist:
 
         if sikulix_instructions:
             proceed = input(
-                "Would you like to automatially add the downloaded songs to their respective spotify playlists? (Y/n): "
+                "Would you like to automatially add the downloaded songs to their respective spotify playlists?\n"
+                "If you wish to proceed, please disable any applications that can reverse the scroll direction\n"
+                "for a mouse, not trackpad. (Y/n): "
             )
             if proceed.lower() == "y":
                 self.add_songs_to_playlists_sikulix(sikulix_instructions)
@@ -342,5 +384,10 @@ class CreatePlaylist:
 # TODO implement as cron job
 if __name__ == '__main__':
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
-    cp = CreatePlaylist(verbose=verbose_arg)
+    kwargs = {"verbose": verbose_arg}
+    if any(arg == "-n" for arg in sys.argv):
+        num_threads_arg = sys.argv[sys.argv.index("-n") + 1]
+        kwargs["num_threads"] = num_threads_arg
+
+    cp = CreatePlaylist(**kwargs)
     cp.sync_playlists()
