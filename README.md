@@ -14,6 +14,7 @@ Sync youtube playlists onto spotify. Download songs which have been marked as yo
 * investigate disappearing downloaded songs bug mobile
 * investigate forcing download of new songs on mobile
 * Use youtube thumbnail as cover art in id3 tag
+* Investigate downloaded songs w/ chapter in wrong order after async
 * Implement as Cron job, UI dashboard should configure how often synced, when is next sync etc...
 * Refactoring 
   * Stop using youtube title parser and regex description/look into youtube dl fix

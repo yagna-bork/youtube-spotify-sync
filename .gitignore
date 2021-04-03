@@ -11,3 +11,4 @@ songs_db
 input.csv
 dl_dump/
 notebooks/.ipynb_checkpoints
+.envrc
