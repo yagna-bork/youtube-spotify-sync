@@ -1,0 +1,5 @@
+{
+  "client_id": "c8b0bf91f2f54f34ba63256f3d009ee8",
+  "redirect_uri": "http://127.0.0.1:9093/spotify/callback/",
+  "scopes": ["playlist-modify-public", "playlist-modify-private"]
+}

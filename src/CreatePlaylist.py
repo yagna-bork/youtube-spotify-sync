@@ -1,7 +1,6 @@
 import os
 from datetime import datetime
 import youtube_dl
-import typing as t
 import re
 import sys
 from youtube_title_parse import get_artist_title
@@ -38,7 +37,7 @@ class YoutubeChapter(t.NamedTuple):
 
 
 class CreatePlaylist:
-    def __init__(self, verbose=True, num_threads=5):
+    def __init__(self, spotify_api: SpotifyAPI, youtube_api, verbose=True, num_threads=5):
         # TODO smart last_synced, check if playlist_id exists on spotify, if not, reset and sync every song again
         self.storage = StorageManager()
         # TODO these three, bottom two with default values
@@ -48,7 +47,7 @@ class CreatePlaylist:
         self.verbose = verbose
         self.num_threads = num_threads
         self.download_archive_path = "../download_archive.txt"
-        self.downloader = youtube_dl.YoutubeDL(
+        self._youtube_downloader = youtube_dl.YoutubeDL(
             {
                 "outtmpl": f"{self.downloads_dir_path}/%(id)s.%(ext)s",
                 "geo_bypass": True,
@@ -62,10 +61,11 @@ class CreatePlaylist:
                 "no_warnings": not self.verbose,
             }
         )
+        self._spotify_api = spotify_api
+        self._youtube_api = youtube_api
 
-    def get_available_videos(
-        self, playlist_items: t.List[t.Dict[str, t.Any]], youtube_api
-    ) -> t.List[t.Dict[str, t.Any]]:
+    @staticmethod
+    def get_available_videos(playlist_items: t.List[t.Dict[str, t.Any]], youtube_api) -> t.List[t.Dict[str, t.Any]]:
         id_to_video = {
             item["contentDetails"]["videoId"]: item for item in playlist_items
         }
@@ -78,27 +78,34 @@ class CreatePlaylist:
         return [video for vid_id, video in id_to_video.items() if vid_id in available_video_ids]
 
     # get youtube videos from playlist (after timestamp if provided) & returns their spotify id information
-    def get_songs_information(self, playlist_id, download, timestamp=None):
+    async def get_songs_information(self, youtube_api, playlist_id, download, timestamp=None):
         songs, next_page_token = [], None
+        playlist_items = youtube_api.playlistItems()
+        request = playlist_items.list(
+            part="snippet,contentDetails", maxResults=50, playlistId=playlist_id, pageToken=next_page_token,
+        )
 
-        while True:
-            with get_youtube_api() as youtube_api:
-                response = youtube_api.playlistItems().list(
-                    part="snippet,contentDetails", maxResults=50, playlistId=playlist_id, pageToken=next_page_token,
-                ).execute()
-                videos = self.get_available_videos(response["items"], youtube_api)
-                next_page_token = response.get("nextPageToken")
+        while request is not None:
+            response = request.execute()
+            videos = self.get_available_videos(response["items"], youtube_api)
 
             for video in videos:
                 video_title = video["snippet"]["title"]
-                published_at_str = video["snippet"]["publishedAt"]
-                published_at = parse_youtube_datetime(published_at_str)  # TODO make sure this in UTC
+                artist = None
+                title = None
+                if not download:
+                    if not (artist_title := get_artist_title(video_title)):
+                        continue
+                    artist, title = artist_title
+                published_at = parse_youtube_datetime(video["snippet"]["publishedAt"])
                 youtube_id = video['contentDetails']['videoId']
                 youtube_url = "https://www.youtube.com/watch?v={}".format(youtube_id)
 
                 if timestamp and published_at < datetime.utcfromtimestamp(timestamp):
                     continue
-                if not download and (spotify_id := self.get_spotify_id(video_title)):
+                if not download:
+                    if not (spotify_id := await self._spotify_api.get_song_uri(artist, title)):
+                        continue
                     song = {"spotify_id": spotify_id, "yt_url": youtube_url}
                     songs.append(song)
                 else:
@@ -108,63 +115,16 @@ class CreatePlaylist:
                     }
                     songs.append(song_info)
 
-            if not next_page_token:
-                break
-
+            request = playlist_items.list_next(request, response)  # pagination
         return songs
 
     def get_playlist_name(self, playlist_id):
-        with get_youtube_api() as youtube_api:
-            request = youtube_api.playlists().list(
-                part="snippet",
-                id=playlist_id
-            )
-            response = request.execute()
+        request = self._youtube_api.playlists().list(
+            part="snippet",
+            id=playlist_id
+        )
+        response = request.execute()
         return response['items'][0]['snippet']['title']
-
-    # Create corresponding playlist on Spotify
-    def create_playlist(self, name, public=True):
-        description = "Spotify synced version of the {} playlist from your YouTube".format(name)
-        with get_spotify_api() as sp:
-            user_id = sp.current_user()['id']
-            try:
-                result = sp.user_playlist_create(user_id, name=name, public=public, description=description)
-                return result["id"], result["name"]
-            except SpotifyException as error:
-                print(f"Got an error while trying to create playlist: {name}.\n{error}")
-                return None
-
-    # TODO Use new version of youtube-dl that implements this fix
-    def get_spotify_id(self, video_title):
-        artist, song_name = get_artist_title(video_title)
-        query = "+".join(artist.split() + song_name.split())
-        spotify_id = None
-        with get_spotify_api() as sp:
-            try:
-                result = sp.search(query, limit=1, type="track", market="GB")
-                items = result['tracks']['items']
-                spotify_id = items[0]['uri'] if items else None
-            except SpotifyException as error:
-                print(
-                    "Got error while trying to get spotify_uri for {0}. song_name, artist: {1}, {2}.\n{3}" .format(
-                        video_title, artist, song_name, error
-                    )
-                )
-
-        # TODO suggest alternative for failed songs command line feature
-        return spotify_id
-
-    def add_songs_to_spotify_playlist(self, song_uris, spotify_playlist_id):
-        with get_spotify_api() as sp:
-            for i in range(0, len(song_uris), 100):
-                uris_batch = song_uris[i: i+100]
-                try:
-                    sp.playlist_add_items(spotify_playlist_id, uris_batch)
-                except SpotifyException as error:
-                    print(
-                        f"Got an error while trying to add following song uris to {spotify_playlist_id}:\n{uris_batch}"
-                        f"\n{error}"
-                    )
 
     def save_instructions_to_file(self, instructions):
         path = f"{self.instructions_dir_path}/{str(datetime.now())}-instructions.txt"
@@ -296,14 +256,14 @@ class CreatePlaylist:
         started_threads = []
         chunked_urls = self._get_chunked_urls(urls, num_threads)
         for urls in chunked_urls:
-            thread = Thread(target=self.downloader.download, kwargs={"url_list": urls})
+            thread = Thread(target=self._youtube_downloader.download, kwargs={"url_list": urls})
             thread.start()
             started_threads.append(thread)
 
         for thread in started_threads:
             thread.join()
 
-    def _handle_songs_to_download(
+    async def _handle_songs_to_download(
         self,
         songs: t.List[t.Dict[str, t.Any]],
         name_created_with: str,
@@ -331,11 +291,8 @@ class CreatePlaylist:
             os.rename(expected_download_location, file_path)
 
             if chapters:
-                if not (result := self.create_playlist(vid_title)):
-                    print(f"Skipping {vid_title}. Couldn't create the playlist required")
-                    continue
-                _, playlist = result
-                # noinspection PyTypeChecker
+                res = await self._spotify_api.playlist_create(vid_title, True)
+                playlist = res.name
                 downloaded_songs = self.split_video_into_chapters_and_save(file_path, chapters)
                 os.remove(file_path)
             else:
@@ -351,28 +308,28 @@ class CreatePlaylist:
             sikulix_instructions.append((playlist, len(downloaded_songs)))
             print(f"{playlist}: {idx + 1}/{len(songs)} songs synced successfully")
 
-    def sync_playlists(self):
+    async def sync_playlists(self):
         sikulix_instructions = []
+        # TODO asyncio this whole thing to benefit from async spotify & youtube calls
         for yt_playlist_id, download in get_inputs().items():
-            print(f"syncing: {self.get_playlist_name(yt_playlist_id)}")
+            playlist_name = self.get_playlist_name(yt_playlist_id)
+            print(f"syncing: {playlist_name}")
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
                 spotify_id = self.storage.get_spotify_playlist_id(yt_playlist_id),
                 name_created_with = self.storage.get_spotify_playlist_name(yt_playlist_id)
             else:
                 last_synced = None
-                playlist_name = self.get_playlist_name(yt_playlist_id)
-                if not (result := self.create_playlist(playlist_name)):
-                    print(f"Skipping {playlist_name}. Couldn't create the playlist on spotify")
-                    continue
-                spotify_id, name_created_with = result
+                playlist = await self._spotify_api.playlist_create(playlist_name, False)
+                spotify_id, name_created_with = playlist.id, playlist.name
 
-            songs = self.get_songs_information(yt_playlist_id, download, last_synced)
+            songs = await self.get_songs_information(self._youtube_api, yt_playlist_id, download, last_synced)
             if download:
-                self._handle_songs_to_download(songs, name_created_with, sikulix_instructions, self.num_threads)
+                await self._handle_songs_to_download(songs, name_created_with, sikulix_instructions, self.num_threads)
             else:
                 song_uris = [song["spotify_id"] for song in songs]
-                self.add_songs_to_spotify_playlist(song_uris, spotify_id)
+                if song_uris:
+                    await self._spotify_api.playlist_add(spotify_id, song_uris)
 
             if self.storage.has_playlist_been_synced(yt_playlist_id):
                 self.storage.update_last_synced(yt_playlist_id)
@@ -389,13 +346,19 @@ class CreatePlaylist:
                 self.add_songs_to_playlists_sikulix(sikulix_instructions)
 
 
-# TODO implement as cron job
-if __name__ == '__main__':
+async def main() -> None:
     verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
     kwargs = {"verbose": verbose_arg}
     if any(arg == "-n" for arg in sys.argv):
         num_threads_arg = sys.argv[sys.argv.index("-n") + 1]
         kwargs["num_threads"] = num_threads_arg
 
-    cp = CreatePlaylist(**kwargs)
-    cp.sync_playlists()
+    with get_youtube_api() as youtube_api:
+        async with get_spotify_api() as spotify_api:
+            cp = CreatePlaylist(**kwargs, spotify_api=spotify_api, youtube_api=youtube_api)
+            await cp.sync_playlists()
+
+# TODO implement as cron job
+# TODO use youtube thumbnail/playlist cover iamge for spotify cover image
+if __name__ == '__main__':
+    asyncio.run(main())
