@@ -10,10 +10,12 @@ import eyed3
 from storage_manager import StorageManager
 from input_manger import get_inputs
 from datetime_manager import parse_youtube_datetime
-from spotipy.client import SpotifyException
-from api_helpers import *
+from youtube_api import get_youtube_api
 import math
 from threading import Thread
+from spotify_api import get_spotify_api, SpotifyAPI
+import asyncio
+import typing as t
 
 sikuli_instruction = t.Tuple[str, int]
 
@@ -171,13 +173,16 @@ class CreatePlaylist:
             file.write("\n".join(instructions))
         return path
 
+    # TODO Move into Youtube API code
     @staticmethod
     def parse_chapter_information(
         line: str, format_to_use_idx: int = -1
     ) -> t.Optional[t.Tuple[YoutubeChapter, int]]:
-        timestamp = r"(\d{1,2}:)?\d{1,2}:\d{1,2}"
-        wrapped_ts = rf"({timestamp})|(\({timestamp}\)|(\[{timestamp}\]))"
-        seperator = rf"( +-+ +)|( +\|+ +)|(: +)"
+        timestamp = r"((\d{1,2}:)?\d{1,2}:\d{1,2})"
+        wrapped_ts = (
+            rf"((?P<ts1>{timestamp})|\((?P<ts2>{timestamp})\)|\[(?P<ts3>{timestamp})\])"
+        )
+        seperator = rf"(?P<sep>( +-+ +)|( +\|+ +)|(: +))"
         ts_pattern = re.compile(wrapped_ts)
 
         if not ts_pattern.search(line):  # need atleast hint of timestamp to carry on
@@ -185,37 +190,38 @@ class CreatePlaylist:
 
         valid_formats = [
             # 0:00 - title - unrelated link
-            re.compile(rf"(?P<wrapped_ts>{wrapped_ts})(?P<sep>{seperator})(?P<title>.*?)(?P=sep)"),
-            re.compile(rf"(?P<wrapped_ts>{wrapped_ts})({seperator})(?P<title>.*)"),
+            re.compile(rf"{wrapped_ts}{seperator}(?P<title>.*?)(?P=sep)"),
+            re.compile(rf"{wrapped_ts}{seperator}(?P<title>.*)"),
             # non-space seperators don't work, have to assume last space if the seperator
             # hence this is to be later in order of formats tried
-            re.compile(rf"(?P<wrapped_ts>{wrapped_ts}) +(?P<title>.*)$"),
-            re.compile(rf"(?P<title>.*)({seperator})(?P<wrapped_ts>{wrapped_ts})$"),
-            re.compile(rf"(?P<title>.*) +(?P<wrapped_ts>{wrapped_ts})$"),
+            re.compile(rf"{wrapped_ts} +(?P<title>.*)$"),
+            re.compile(rf"(?P<title>.*){seperator}{wrapped_ts}$"),
+            re.compile(rf"(?P<title>.*) +{wrapped_ts}$"),
         ]
-        # using one format per description assumption for optimisation
         valid_formats = valid_formats if format_to_use_idx == -1 else [valid_formats[format_to_use_idx]]
         for idx, format_ in enumerate(valid_formats):
             match = format_.match(line)
             if match:
-                wrapped_ts, title = match.group("wrapped_ts"), match.group("title").strip()
-                unwrapped_ts = ts_pattern.search(wrapped_ts).group(0)
-                youtube_chapter = YoutubeChapter(YoutubeChapter.start_timestamp_to_seconds(unwrapped_ts), title)
+                timestamp = match.group("ts1") or match.group("ts2") or match.group("ts3")
+                title = match.group("title").strip()
+                youtube_chapter = YoutubeChapter(YoutubeChapter.start_timestamp_to_seconds(timestamp), title)
                 format_used_idx = idx if format_to_use_idx == -1 else format_to_use_idx
                 return youtube_chapter, format_used_idx
 
-    def parse_chapters_from_description(self, description: str) -> t.List[YoutubeChapter]:
+    @classmethod
+    def parse_chapters_from_description(cls, description: str) -> t.List[YoutubeChapter]:
         chapters = []
         lines = description.split("\n")
         parsing_format_to_use_idx = -1
         for line in lines:
-            if result := self.parse_chapter_information(line, parsing_format_to_use_idx):
+            if result := cls.parse_chapter_information(line, parsing_format_to_use_idx):
                 youtube_chapter, format_used_idx = result
                 if len(chapters) == 0:
                     # youtube rules say first timestamp must start at 0:00 for chapters in description to be valid
                     if youtube_chapter.seconds_after_start != 0:
                         return []
                     else:
+                        # using the assumption that only one format per description for optimisation
                         parsing_format_to_use_idx = format_used_idx
                 chapters.append(youtube_chapter)
         return chapters
@@ -237,7 +243,8 @@ class CreatePlaylist:
             song_files.append(output_file)
         return song_files
 
-    def add_id3_tag(self, file_path: str, title: str, album: str, track_number: int) -> None:
+    @staticmethod
+    def add_id3_tag(file_path: str, title: str, album: str, track_number: int) -> None:
         file = eyed3.load(file_path)
         file.tag.title = title
         file.tag.album = album
@@ -284,6 +291,7 @@ class CreatePlaylist:
             i += step
         return chunked_urls
 
+    # TODO convert to https://docs.python.org/3/library/asyncio-subprocess.html
     def _download_yt_videos_threaded(self, urls: t.List[str], num_threads: int) -> None:
         started_threads = []
         chunked_urls = self._get_chunked_urls(urls, num_threads)

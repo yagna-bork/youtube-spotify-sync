@@ -48,6 +48,18 @@ class CreatePlaylistEmptyInit(CreatePlaylist):
             ]
         ),
         (
+            "description5",
+            [
+                YoutubeChapter(0, "God's Plan (lofi remix)"),
+                YoutubeChapter(194, "Passion Fruit (lofi remix)"),
+                YoutubeChapter(363, "Hotline Bling (lofi remix)"),
+                YoutubeChapter(550, "Life is Good (lofi remix)"),
+                YoutubeChapter(812, "Headlines (lofi remix)"),
+                YoutubeChapter(1001, "Toosie Slide (lofi remix)"),
+                YoutubeChapter(1262, "Pound Cake (lofi remix)"),
+            ]
+        ),
+        (
             "repeated_seperators_description",
             [
                 YoutubeChapter(0, "SEE YOU IN UTOPIA [Prod. By Forgotten]"),
