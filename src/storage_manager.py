@@ -35,15 +35,13 @@ class StorageManager:
         db = self.get_database()
         return yt_playlist_id in db['synced_playlists']
 
-    def store_new_entry(self, yt_playlist_id, spotify_playlist_id, spotify_name):
+    def store_new_entry(self, yt_playlist_id, most_recent_sync, spotify_playlist_id, spotify_name):
         db = self.get_database()
-        now_ts = datetime.timestamp(datetime.utcnow())
         db['synced_playlists'][yt_playlist_id] = {
             "spotify_playlist_id": spotify_playlist_id,
-            "last_synced_ts": now_ts,
+            "last_synced_ts": datetime.timestamp(most_recent_sync),
             "spotify_name": spotify_name
         }
-
         self.write_database(db)
 
     def get_last_synced_timestamp(self, yt_playlist_id):
@@ -62,10 +60,9 @@ class StorageManager:
             return None
         return db["synced_playlists"][yt_playlist_id]["spotify_name"]
 
-    def update_last_synced(self, yt_playlist_id):
+    def update_last_synced(self, yt_playlist_id, most_recent_sync):
         db = self.get_database()
-        now_ts = datetime.timestamp(datetime.utcnow())
-        db["synced_playlists"][yt_playlist_id]["last_synced_ts"] = now_ts
+        db["synced_playlists"][yt_playlist_id]["last_synced_ts"] = datetime.timestamp(most_recent_sync)
         self.write_database(db)
 
     def seed_pickle_file(self):

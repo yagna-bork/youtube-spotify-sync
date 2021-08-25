@@ -1,10 +1,10 @@
 import pytest
 import typing as t
-from ..CreatePlaylist import CreatePlaylist, YoutubeChapter
+from ..youtube_api import YoutubeAPI, YoutubeChapter
 
 
 # regular CreatePlaylist has __init__ that requires 0Auth for spotify/yt tokens which we don't for testing
-class CreatePlaylistEmptyInit(CreatePlaylist):
+class YoutubeAPIEmptyInit(YoutubeAPI):
     def __init__(self):
         pass
 
@@ -84,7 +84,7 @@ class CreatePlaylistEmptyInit(CreatePlaylist):
 def test_parse_chapters_from_description(description_file: str, expected_chapters: t.Tuple[str, str]) -> None:
     with open(f"tests/data/{description_file}", "r") as file:  # TODO setup.py, relative file import
         description = file.read()
-    cp = CreatePlaylistEmptyInit()
+    cp = YoutubeAPIEmptyInit()
     parsed_chapters = cp.parse_chapters_from_description(description)
 
     assert parsed_chapters == expected_chapters

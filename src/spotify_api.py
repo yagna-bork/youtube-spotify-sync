@@ -27,6 +27,12 @@ class SpotifyAPI(tk.Spotify):
         description = f"Spotify synced version of the {name} playlist from your YouTube"
         return await super().playlist_create(self._user_id, name, public, description)
 
+    async def does_playlist_exist(self, playlist_id: str) -> bool:
+        try:
+            return bool(await self.playlist(playlist_id, fields="id"))
+        except tk.NotFound:
+            return False
+
 
 def save_token(token: tk.Token) -> None:
     token_info = {
