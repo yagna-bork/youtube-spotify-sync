@@ -1,199 +1,153 @@
 import os
 from datetime import datetime
-import youtube_dl
-import re
-import sys
 from youtube_title_parse import get_artist_title
 import subprocess
-import eyed3
 from storage_manager import StorageManager
 from input_manger import get_inputs
-from youtube_api import get_youtube_api, VideoInfo
-import math
-from threading import Thread
+from youtube_api import get_youtube_api, VideoInfo, YoutubeAPI, YoutubeChapter
 from spotify_api import get_spotify_api, SpotifyAPI
 import asyncio
 import typing as t
+import argparse
+from pathlib import Path
+from utils import run_command_async
+import eyed3
+from shlex import quote
 
-sikuli_instruction = t.Tuple[str, int]
+DOWNLOADS_DIR_PATH = Path(__file__).parent.parent / "dl_dump"
+
+SikuliInstructions = t.List[t.Tuple[str, int]]
 
 
 class PlaylistSyncher:
-    def __init__(self, spotify_api: SpotifyAPI, youtube_api, verbose=True, num_threads=5):
-        # TODO smart last_synced, check if playlist_id exists on spotify, if not, reset and sync every song again
-        self.storage = StorageManager()
-        # TODO these three, bottom two with default values
-        self.spotify_local_files_path = "{}/Music/spotify".format(os.getenv("HOME"))
-        self.downloads_dir_path = "../dl_dump"
-        self.instructions_dir_path = "../instruction_logs"
+    def __init__(
+        self,
+        spotify_api: SpotifyAPI,
+        youtube_api: YoutubeAPI,
+        verbose: bool = True,
+        max_parallel_downloads: int = 5,
+        local_files_path: t.Optional[Path] = None,
+    ):
+        """You must use get_instance instead."""
+        self._storage = StorageManager()
+        self.spotify_local_files_path = local_files_path
         self.verbose = verbose
-        self.num_threads = num_threads
-        self.download_archive_path = "../download_archive.txt"
-        self._youtube_downloader = youtube_dl.YoutubeDL(
-            {
-                "outtmpl": f"{self.downloads_dir_path}/%(id)s.%(ext)s",
-                "geo_bypass": True,
-                "postprocessors":
-                    [{'key': 'FFmpegExtractAudio',
-                      'nopostoverwrites': False,
-                      'preferredcodec': 'mp3',
-                      'preferredquality': '320'}],
-                "noplaylist": True,
-                "quiet": not self.verbose,
-                "no_warnings": not self.verbose,
-            }
-        )
+        self.max_parallel_downloads = max_parallel_downloads
         self._spotify_api = spotify_api
         self._youtube_api = youtube_api
+        self._download_sem = asyncio.Semaphore(max_parallel_downloads)
+        self._ffmpeg_lock = asyncio.Lock()
 
-    def save_instructions_to_file(self, instructions):
-        path = f"{self.instructions_dir_path}/{str(datetime.now())}-instructions.txt"
-        path = re.sub(" +", "-", path)
-        with open(path, "w+") as file:
-            file.write("\n".join(instructions))
-        return path
+    @classmethod
+    async def get_instance(cls, *args, **kwargs) -> "PlaylistSyncher":
+        """
+        Use this instead of the constructor to get an instance of PlaylistSyncher.
 
-    def split_video_into_chapters_and_save(self, file_path: str, chapters: t.List[VideoInfo]) -> t.List[str]:
+        An instance of PlaylistSyncher must be created in the same asyncio loop that it's methods will be called from.
+        This is because the asyncio semaphores are used internally are initialised in the constructor. See __init__
+        for the args and kwargs that this method takes.
+        """
+        return cls(*args, **kwargs)
+
+    async def _split_video_into_chapters(self, file_path: str, chapters: t.List[YoutubeChapter]) -> t.List[str]:
         song_files = []
         for i, chapter in enumerate(chapters):
             output_file = f"{chapter.title}.mp3"
-            ffmpeg_args = [
-                "ffmpeg", "-ss", str(chapter.seconds_after_start), "-loglevel",
-                "info" if self.verbose else "quiet",
-                "-i", file_path, "-b:a", "320k", f"{self.downloads_dir_path}/{output_file}"
-            ]
+            duration = None
             if i + 1 < len(chapters):
                 duration = chapters[i+1].seconds_after_start - chapter.seconds_after_start
-                ffmpeg_args = ffmpeg_args[:3] + ["-t", str(duration)] + ffmpeg_args[3:]
-            # TODO check if this completed succesfully, only then append to song_files
-            subprocess.run(ffmpeg_args)
-            song_files.append(output_file)
+            cmd = (
+                f"ffmpeg -ss {chapter.seconds_after_start} "
+                f"{'-t ' + str(duration) if duration else ''} "
+                f"-loglevel {'info' if self.verbose else 'quiet'} "
+                f"-i {quote(file_path)} {quote(str(DOWNLOADS_DIR_PATH/output_file))}"
+            )
+            if await run_command_async(cmd):
+                song_files.append(output_file)
         return song_files
 
     @staticmethod
-    def add_id3_tag(file_path: str, title: str, album: str, track_number: int) -> None:
-        file = eyed3.load(file_path)
+    def _add_id3_tag(path: Path, title: str, album: str, track_number: int) -> None:
+        file = eyed3.load(path)
         file.tag.title = title
         file.tag.album = album
         file.tag.track_number = track_number
         file.tag.save()
 
-    @classmethod
-    def add_songs_to_playlists_sikulix(cls, instructions):
-        home = os.environ["HOME"]
-        call_args = [
-            "java", "-jar", f"{home}/sikulix/sikulixide-2.0.4.jar", "-r",
-            f"{home}/programming/automation/ytToSpotify/src/local_files_automation.sikuli/", "--"
-        ]
-        for playlist, count in instructions:
-            call_args.extend(["-e", f"{playlist},{count}"])
-        subprocess.run(call_args)
-
-    @classmethod
-    def _get_chunked_urls(cls, urls, num_threads):
-        """
-        Returns a list of urls in chunked form so the load on each thread is balanced
-
-        Example:
-            urls: [1,2,3..35], num_threads: 6
-            returns [[1..6],[7..12],[13..18],[19..24],[25..30],[31..35]]
-
-        Example:
-            urls: [1,2,3], num_threads: 5
-            returns [[1], [2], [3]] -> only 3 threads are needed
-        """
-        def increment_first_n(n: int, lst: t.List[t.Union[int, float]]) -> None:
-            for idx in range(n):
-                lst[idx] += 1
-
-        chunk_size = math.floor(len(urls) / num_threads)
-        allocation = [chunk_size] * num_threads
-        increment_first_n(len(urls) - sum(allocation), allocation)  # ensures sum(allocation) == len(urls)
-
-        chunked_urls, i = [], 0
-        for step in allocation:
-            if step == 0:
-                break
-            chunked_urls.append(urls[i: i + step])
-            i += step
-        return chunked_urls
-
-    # TODO convert to https://docs.python.org/3/library/asyncio-subprocess.html
-    def _download_yt_videos_threaded(self, urls: t.List[str], num_threads: int) -> None:
-        started_threads = []
-        chunked_urls = self._get_chunked_urls(urls, num_threads)
-        for urls in chunked_urls:
-            thread = Thread(target=self._youtube_downloader.download, kwargs={"url_list": urls})
-            thread.start()
-            started_threads.append(thread)
-        for thread in started_threads:
-            thread.join()
-
     async def _handle_songs_to_download(
         self,
-        songs: t.List[t.Dict[str, t.Any]],
+        songs: t.List[VideoInfo],
         name_created_with: str,
-        sikulix_instructions: t.List[sikuli_instruction],
-        num_threads: int = 5,
+        sikulix_instructions: SikuliInstructions,
     ) -> None:
-        urls = [song["yt_url"] for song in songs]
-        # TODO speed up: stop downloading mp4 -> mp3 in every case
-        # TODO (WARNING: Requested formats are incompatible for merge and will be merged into mkv.)
-        self._download_yt_videos_threaded(urls, num_threads)
-
         for idx, song in enumerate(songs):
-            yt_id, vid_title, chapters = song["yt_id"], song["vid_title"], song["chapters"]
-            expected_download_location = os.path.join(self.downloads_dir_path, yt_id + ".mp3")
-            if not os.path.isfile(expected_download_location):
+            youtube_id, title, chapters = song["id"], song["title"], song["chapters"]
+            async with self._download_sem:
+                # title in youtube-dl output template and on the actual youtube video can vary so id is required
+                success = await run_command_async(
+                    "youtube-dl --geo-bypass -f 'bestaudio[ext=mp3]/bestaudio' -x --audio-format mp3 --audio-quality 0 "
+                    f"-o '{DOWNLOADS_DIR_PATH}/%(id)s.%(ext)s'"
+                    f"{'-q --no-warnings' if not self.verbose else ''} "
+                    f"{song['url']}"
+                )
+            if not success:
                 # TODO implement "loose songs" bucket for songs that errored but should be retried
                 print(
-                    f"Failed to download {vid_title}."
-                    f" You will have to do sync it manually until the loose songs feature is implemented"
+                    f"Failed to download {title}. "
+                    f"You will have to do sync it manually until the loose songs feature is implemented"
                 )
                 continue
 
-            file_name = vid_title + ".mp3"
-            file_path = os.path.join(self.downloads_dir_path, file_name)
-            os.rename(expected_download_location, file_path)
+            file = f"{title}.mp3"
+            full_path = Path(DOWNLOADS_DIR_PATH) / file
+            os.rename(Path(DOWNLOADS_DIR_PATH) / f"{youtube_id}.mp3", full_path)
 
             if chapters:
-                res = await self._spotify_api.playlist_create(vid_title, True)
-                playlist = res.name
-                downloaded_songs = self.split_video_into_chapters_and_save(file_path, chapters)
-                os.remove(file_path)
+                await self._spotify_api.playlist_create(title, public=True)
+                playlist = title
+                async with self._ffmpeg_lock:
+                    downloaded_songs = await self._split_video_into_chapters(str(full_path), chapters)
+                os.remove(full_path)
             else:
-                playlist, downloaded_songs = name_created_with, [file_name]
+                playlist, downloaded_songs = name_created_with, [file]
 
-            for i, file_name in enumerate(downloaded_songs):
-                title = file_name.rpartition(".mp3")[0]
-                path = os.path.join(self.downloads_dir_path, file_name)
-                self.add_id3_tag(path, title=title, album=playlist, track_number=i + 1)
+            for i, file in enumerate(downloaded_songs):
+                full_path = Path(DOWNLOADS_DIR_PATH) / file
+                title = file.rpartition(".mp3")[0]
+                self._add_id3_tag(full_path, title=title, album=playlist, track_number=i + 1)
                 # TODO make sure same ordering (i.e. track number) shows up in local files
-                os.rename(path, os.path.join(self.spotify_local_files_path, file_name))
+                os.rename(full_path, self.spotify_local_files_path / file)
 
             sikulix_instructions.append((playlist, len(downloaded_songs)))
             print(f"{playlist}: {idx + 1}/{len(songs)} songs synced successfully")
 
-    async def _get_spotify_uris(self, videos: t.List[VideoInfo]) -> t.List[str]:
+    async def _add_songs_to_spotify_playlist(self, playlist_id: str, songs: t.List[VideoInfo]) -> None:
+        if not songs:
+            return
         uris = []
-        for video in videos:
-            if artist_title := get_artist_title(video["title"]):
-                if uri := await self._spotify_api.get_song_uri(artist_title[0], artist_title[1]):
-                    uris.append(uri)
-        return uris
+        for song in songs:
+            if not (artist_title := get_artist_title(song["title"])):
+                continue
+            if uri := await self._spotify_api.get_song_uri(*artist_title):
+                uris.append(uri)
+        if uris:
+            await self._spotify_api.playlist_add(playlist_id, uris)
 
-    async def sync_playlist(
-        self, yt_playlist_id: str, download: bool, sikulix_instructions: t.List[sikuli_instruction]
+    async def _sync_playlist(
+        self,
+        yt_playlist_id: str,
+        download: bool,
+        sikulix_instructions: SikuliInstructions,
     ) -> None:
         playlist_name = await self._youtube_api.get_playlist_name(yt_playlist_id)
-        print(f"syncing: {playlist_name}")
+        print(f"Syncing: {playlist_name}.")
 
         if (
-            (spotify_id := self.storage.get_spotify_playlist_id(yt_playlist_id))
+            (spotify_id := self._storage.get_spotify_playlist_id(yt_playlist_id))
             and self._spotify_api.does_playlist_exist(spotify_id)
         ):
-            last_synced = self.storage.get_last_synced_timestamp(yt_playlist_id)
-            name_created_with = self.storage.get_spotify_playlist_name(yt_playlist_id)
+            last_synced = self._storage.get_last_synced_timestamp(yt_playlist_id)
+            name_created_with = self._storage.get_spotify_playlist_name(yt_playlist_id)
         else:
             last_synced = None
             playlist = await self._spotify_api.playlist_create(playlist_name, False)
@@ -203,27 +157,36 @@ class PlaylistSyncher:
         unsynced_songs = [
             song
             for song in await self._youtube_api.get_video_infos_from_playlist(yt_playlist_id)
-            if not last_synced or song["publishedAt"] >= last_synced
+            if not last_synced or song["published_at"] >= last_synced
         ]
         if download:
-            await self._handle_songs_to_download(
-                unsynced_songs, name_created_with, sikulix_instructions, self.num_threads
-            )
+            await self._handle_songs_to_download(unsynced_songs, name_created_with, sikulix_instructions)
         else:
-            if uris := await self._get_spotify_uris(unsynced_songs):
-                await self._spotify_api.playlist_add(spotify_id, uris)
+            await self._add_songs_to_spotify_playlist(spotify_id, unsynced_songs)
 
-        if self.storage.has_playlist_been_synced(yt_playlist_id):
-            self.storage.update_last_synced(yt_playlist_id, most_recent_sync)
+        if self._storage.has_playlist_been_synced(yt_playlist_id):
+            self._storage.update_last_synced(yt_playlist_id, most_recent_sync)
         else:
-            self.storage.store_new_entry(yt_playlist_id, most_recent_sync, spotify_id, name_created_with)
+            self._storage.store_new_entry(yt_playlist_id, most_recent_sync, spotify_id, name_created_with)
+        print(f"Finished syncing: {playlist_name}")
+
+    @staticmethod
+    def _add_songs_to_playlists_sikulix(instructions: SikuliInstructions):
+        call_args = [
+            "java", "-jar", f"{os.environ['HOME']}/sikulix/sikulixide-2.0.4.jar", "-r",
+            f"{os.environ['HOME']}/programming/automation/ytToSpotify/src/local_files_automation.sikuli/", "--"
+        ]
+        for playlist, count in instructions:
+            call_args.extend(["-e", f"{playlist},{count}"])
+        subprocess.run(call_args)
 
     async def sync_playlists(self) -> None:
-        sikulix_instructions = []
+        sikulix_instructions: SikuliInstructions = []
+        # TODO display progress bar for each individual playlist
         await asyncio.gather(
             *[
-                self.sync_playlist(id_, download, sikulix_instructions)
-                for id_, download in get_inputs().items()
+                self._sync_playlist(playlist_id, download, sikulix_instructions)
+                for playlist_id, download in get_inputs().items()
             ]
         )
         if sikulix_instructions:
@@ -233,18 +196,44 @@ class PlaylistSyncher:
                 "for a mouse, not trackpad. (Y/n): "
             )
             if proceed.lower() == "y":
-                self.add_songs_to_playlists_sikulix(sikulix_instructions)
+                self._add_songs_to_playlists_sikulix(sikulix_instructions)
 
 
 async def main() -> None:
-    verbose_arg = any(arg in ["--verbose", "-v"] for arg in sys.argv)
-    kwargs = {"verbose": verbose_arg}
-    if any(arg == "-n" for arg in sys.argv):
-        num_threads_arg = sys.argv[sys.argv.index("-n") + 1]
-        kwargs["num_threads"] = num_threads_arg
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-v", dest="verbose", action="store_true", help="Enables verbose mode for more detailed output"
+    )
+    parser.add_argument(
+        "--max-parallel-downloads",
+        dest="max_parallel_downloads",
+        type=int,
+        default=5,
+        action="store",
+        help=(
+            "Maximum number videos that will be downloaded, if required, at once. "
+            "Set this based on your network bandwight. Default is 5."
+        ),
+    )
+    parser.add_argument(
+        "--local-files-path",
+        dest="local_files_path",
+        default=None,
+        action="store",
+        help=(
+            "Location of a spotify local files linked directory where downloaded songs will be saved to. Required "
+            "if you have download enabled playlist setup for syncing."
+        ),
+    )
+    args = parser.parse_args()
     async with get_spotify_api() as spotify_api, get_youtube_api() as youtube_api:
-        psync = PlaylistSyncher(**kwargs, spotify_api=spotify_api, youtube_api=youtube_api)
+        psync = await PlaylistSyncher.get_instance(
+            spotify_api,
+            youtube_api,
+            args.verbose,
+            args.max_parallel_downloads,
+            Path(args.local_files_path).expanduser(),
+        )
         await psync.sync_playlists()
 
 # TODO implement as cron job

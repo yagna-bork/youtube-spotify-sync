@@ -1,7 +1,7 @@
 from spotipy.cache_handler import CacheHandler
 import keyring
 from keyring.errors import InitError, PasswordSetError
-import json
+import asyncio
 import typing as t
 
 
@@ -31,3 +31,9 @@ class CacheKeyringHandler(CacheHandler):
             print("Couldn't write token to the %s keyring service", self.keyring_service_id)
         except InitError:
             print("Couldn't initalise the %s keyring service while trying to write", self.keyring_service_id)
+
+
+async def run_command_async(cmd: str) -> bool:
+    proc = await asyncio.create_subprocess_shell(cmd)
+    await proc.communicate()
+    return proc.returncode == 0
